@@ -1,4 +1,4 @@
-//! Desktop app: czkawka_core scans behind an mwp-ui page (see `ui/`).
+//! Plekke, the desktop app: czkawka_core scans behind an mwp-ui page (see `ui/`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashSet;
@@ -231,9 +231,9 @@ fn finish<T: CommonData>(tool: &T, groups: Vec<Vec<Item>>) -> ScanResult {
 }
 
 fn main() {
-    let config_cache = set_config_cache_path("Czkawka", "Czkawka");
-    setup_logger(false, "czkawka_app", filtering_messages);
-    print_version_mode("Czkawka app");
+    let config_cache = set_config_cache_path("Plekke", "Plekke");
+    setup_logger(false, "plekke", filtering_messages);
+    print_version_mode("Plekke");
     print_infos_and_warnings(config_cache.infos, config_cache.warnings);
 
     tauri::Builder::default()
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn refuses_to_trash_paths_outside_the_last_results() {
-        let dir = std::env::temp_dir().join(format!("czkawka_app_guard_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("plekke_guard_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("keep.txt");
         std::fs::write(&file, "x").unwrap();

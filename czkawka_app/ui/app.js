@@ -8,7 +8,7 @@ const TOOLS = {
   'empty-folders': { title: 'Empty folders', sub: 'Which folders hold nothing?', grouped: false, none: 'No empty folders found' },
   'empty-files': { title: 'Empty files', sub: 'Which files are 0 bytes?', grouped: false, none: 'No empty files found' },
 };
-const FOLDERS_KEY = 'czkawka.folders';
+const FOLDERS_KEY = 'plekke.folders';
 const NUMBER = new Intl.NumberFormat(document.documentElement.lang, { maximumFractionDigits: 1 });
 
 const $ = (id) => document.getElementById(id);
@@ -126,7 +126,7 @@ function showTool() {
   }
   $('tool-title').textContent = tool.title;
   $('tool-sub').textContent = tool.sub;
-  document.title = `${tool.title} · Czkawka`;
+  document.title = `${tool.title} · Plekke`;
   for (const block of document.querySelectorAll('[data-options]')) block.hidden = block.dataset.options !== state.tool;
   for (const item of document.querySelectorAll('#select-menu [data-select^="all-but"], #select-menu hr')) {
     item.hidden = !tool.grouped;

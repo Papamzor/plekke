@@ -111,8 +111,8 @@ pub fn set_config_cache_path(cache_name: &'static str, config_name: &'static str
     // By default, such folders are used:
     // Lin: /home/username/.config/czkawka
     // LinFlatpak: /home/username/.var/app/com.github.qarmin.czkawka/config/czkawka
-    // Win: C:\Users\Username\AppData\Roaming\Qarmin\Czkawka\config
-    // Mac: /Users/Username/Library/Application Support/pl.Qarmin.Czkawka
+    // Win: C:\Users\Username\AppData\Roaming\Papamzor\<config_name>\config
+    // Mac: /Users/Username/Library/Application Support/io.github.Papamzor.<config_name>
 
     let mut infos = Vec::new();
     let mut warnings = Vec::new();
@@ -121,10 +121,10 @@ pub fn set_config_cache_path(cache_name: &'static str, config_name: &'static str
     let cache_folder_env = env::var("CZKAWKA_CACHE_PATH").unwrap_or_default().trim().to_string();
 
     let (android_cache_folder, android_config_folder) = android_default_dirs(cache_name, config_name);
-    let default_cache_folder = ProjectDirs::from("pl", "Qarmin", cache_name)
+    let default_cache_folder = ProjectDirs::from("io.github", "Papamzor", cache_name)
         .map(|proj_dirs| proj_dirs.cache_dir().to_path_buf())
         .or(android_cache_folder);
-    let default_config_folder = ProjectDirs::from("pl", "Qarmin", config_name)
+    let default_config_folder = ProjectDirs::from("io.github", "Papamzor", config_name)
         .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
         .or(android_config_folder);
 

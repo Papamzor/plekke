@@ -1,7 +1,7 @@
-# czkawka (hard fork) - Codebase Guide
+# Plekke - Codebase Guide
 
-Hard fork of qarmin/czkawka. Upstream is irrelevant: never pull from it, never shape changes for it.
-Goal: `czkawka_core` as the scanning engine behind a Tauri desktop app styled with mwp-ui
+Plekke (repo Papamzor/plekke) is a hard fork of qarmin/czkawka. Upstream is irrelevant: never pull from it, never shape changes for it.
+Goal: `czkawka_core` as the scanning engine behind Plekke, a Tauri desktop app styled with mwp-ui
 (`../mwp-ui/mwp-ui`). Old GTK/Slint frontends are deleted; delete freely when code only served them.
 
 All code, comments, commit messages and docs are in **English**.
@@ -11,7 +11,7 @@ All code, comments, commit messages and docs are in **English**.
 ```
 czkawka_core/   # Scanning engine (library). Architecture: czkawka_core/AGENTS.md
 czkawka_cli/    # CLI frontend, also the quickest smoke test for core changes
-czkawka_app/    # Tauri v2 desktop app: src/main.rs (commands) + ui/ (static HTML/JS, mwp-ui)
+czkawka_app/    # Plekke, the Tauri v2 desktop app: src/main.rs (commands) + ui/ (static HTML/JS, mwp-ui)
 ```
 
 Edition 2024, Rust >= 1.94.1 (stable MSVC toolchain on Windows).

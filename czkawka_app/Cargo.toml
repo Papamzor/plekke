@@ -3,7 +3,7 @@ name = "czkawka_app"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.1"
-description = "Desktop app for czkawka_core, styled with mwp-ui"
+description = "Plekke: desktop app on czkawka_core, styled with mwp-ui"
 license = "MIT"
 publish = false
 
