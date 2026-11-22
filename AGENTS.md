@@ -11,9 +11,22 @@ All code, comments, commit messages and docs are in **English**.
 ```
 czkawka_core/   # Scanning engine (library). Architecture: czkawka_core/AGENTS.md
 czkawka_cli/    # CLI frontend, also the quickest smoke test for core changes
+czkawka_app/    # Tauri v2 desktop app: src/main.rs (commands) + ui/ (static HTML/JS, mwp-ui)
 ```
 
 Edition 2024, Rust >= 1.94.1 (stable MSVC toolchain on Windows).
+
+## czkawka_app
+
+- Run: `cargo run -p czkawka_app`. Installer: `cargo tauri build` inside `czkawka_app/` (needs `cargo install tauri-cli --version "^2"`).
+- Commands: `scan` (one request per tool, progress as `scan-progress` events), `stop_scan`, `move_to_trash`.
+  `move_to_trash` only accepts paths from the last scan's results; keep that guard.
+- `ui/` is plain HTML + one ES module, no bundler, no npm. Write it against the mwp-ui skill
+  (`../mwp-ui/mwp-ui/skill/mwp-ui/SKILL.md`): its classes and attributes only, no own CSS, no `style=""`.
+  Check with `node ../mwp-ui/mwp-ui/scripts/audit.mjs czkawka_app/ui/index.html`.
+- `ui/vendor/mwp-ui/` is mwp-ui's `dist/` copied verbatim from a tag (see its `VERSION`); never edit it.
+- File and folder names come from disk: put them in the page with `textContent`/`el()`, never `innerHTML`.
+- The CSP in `tauri.conf.json` allows only same-origin scripts and styles; keep inline scripts and styles out.
 
 ## Quality gate
 

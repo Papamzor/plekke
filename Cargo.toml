@@ -2,6 +2,7 @@
 members = [
     "czkawka_core",
     "czkawka_cli",
+    "czkawka_app",
 ]
 resolver = "3"
 

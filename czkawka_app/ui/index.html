@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en-BE" data-brand="ink" data-mode="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Czkawka</title>
+  <link rel="stylesheet" href="vendor/mwp-ui/mwp.css">
+  <script type="module" src="vendor/mwp-ui/mwp.js" blocking="render"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body class="mwp-shell">
+  <header class="mwp-nav">
+    <a class="mwp-nav__brand" href="#duplicates">
+      <span class="mwp-nav__logo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h6a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9h6a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-6a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3z" fill="currentColor"/></svg>
+      </span>
+      Czkawka
+    </a>
+    <nav class="mwp-nav__links" aria-label="Tools">
+      <a class="mwp-nav__link" href="#duplicates" aria-current="page">Duplicates</a>
+      <a class="mwp-nav__link" href="#big-files">Big files</a>
+      <a class="mwp-nav__link" href="#empty-folders">Empty folders</a>
+      <a class="mwp-nav__link" href="#empty-files">Empty files</a>
+    </nav>
+    <div class="mwp-nav__actions">
+      <mwp-mode-toggle></mwp-mode-toggle>
+    </div>
+  </header>
+
+  <main class="mwp-page" data-width="wide">
+    <header class="mwp-page__head">
+      <h1 class="mwp-page__title" id="tool-title">Duplicates</h1>
+      <p class="mwp-page__sub" id="tool-sub">Which files are stored more than once?</p>
+    </header>
+
+    <div class="mwp-split" data-gap="6">
+      <div class="mwp-stack" data-gap="4">
+        <section class="mwp-card" aria-labelledby="included-title">
+          <header class="mwp-card__head">
+            <h2 class="mwp-card__title" id="included-title">Folders to scan</h2>
+            <div class="mwp-card__actions">
+              <button type="button" class="mwp-btn" data-size="s" id="add-included"><svg class="mwp-icon" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#folder-plus"/></svg> Add</button>
+            </div>
+          </header>
+          <div class="mwp-list mwp-list--flush" id="included-list"></div>
+        </section>
+
+        <section class="mwp-card" aria-labelledby="excluded-title">
+          <header class="mwp-card__head">
+            <h2 class="mwp-card__title" id="excluded-title">Skip these folders</h2>
+            <div class="mwp-card__actions">
+              <button type="button" class="mwp-btn" data-size="s" id="add-excluded"><svg class="mwp-icon" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#folder-plus"/></svg> Add</button>
+            </div>
+          </header>
+          <div class="mwp-list mwp-list--flush" id="excluded-list"></div>
+        </section>
+
+        <section class="mwp-card" aria-labelledby="options-title">
+          <header class="mwp-card__head">
+            <h2 class="mwp-card__title" id="options-title">Options</h2>
+          </header>
+          <div class="mwp-card__body">
+            <div class="mwp-stack" data-gap="4" data-options="duplicates">
+              <label class="mwp-field">
+                <span class="mwp-field__label">Compare by</span>
+                <select class="mwp-field__control" id="dup-method">
+                  <option value="hash">Content (slowest, exact)</option>
+                  <option value="size">Size only</option>
+                  <option value="sizeName">Size and name</option>
+                  <option value="name">Name only</option>
+                </select>
+              </label>
+              <label class="mwp-field">
+                <span class="mwp-field__label">Ignore files smaller than (kB)</span>
+                <input class="mwp-field__control" type="number" id="dup-min-size" min="0" step="any" value="8">
+              </label>
+            </div>
+            <div class="mwp-stack" data-gap="4" data-options="big-files" hidden>
+              <label class="mwp-field">
+                <span class="mwp-field__label">Show</span>
+                <select class="mwp-field__control" id="big-mode">
+                  <option value="biggest">Biggest files</option>
+                  <option value="smallest">Smallest files</option>
+                </select>
+              </label>
+              <label class="mwp-field">
+                <span class="mwp-field__label">Number of files</span>
+                <input class="mwp-field__control" type="number" id="big-count" min="1" max="100000" step="1" value="50">
+              </label>
+            </div>
+            <p class="mwp-muted" data-options="empty-folders" hidden>Folders that hold nothing, or only other empty folders.</p>
+            <p class="mwp-muted" data-options="empty-files" hidden>Files of 0 bytes.</p>
+          </div>
+        </section>
+
+        <div class="mwp-cluster" data-gap="2">
+          <button type="button" class="mwp-btn mwp-btn--primary" id="scan"><svg class="mwp-icon" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#search"/></svg> Scan</button>
+          <button type="button" class="mwp-btn" id="stop" disabled><svg class="mwp-icon" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#square"/></svg> Stop</button>
+        </div>
+      </div>
+
+      <div class="mwp-stack" data-gap="4">
+        <label class="mwp-field" id="progress-field" hidden>
+          <span class="mwp-field__label" id="progress-label">Starting…</span>
+          <progress class="mwp-progress" id="progress" max="100"></progress>
+        </label>
+
+        <div class="mwp-callout" data-tone="warn" role="status" id="warnings" hidden>
+          <strong class="mwp-callout__title" id="warnings-title">Some items could not be read</strong>
+          <ul id="warnings-list"></ul>
+        </div>
+
+        <section class="mwp-card" aria-labelledby="results-title">
+          <header class="mwp-card__head">
+            <h2 class="mwp-card__title" id="results-title">Results</h2>
+            <div class="mwp-card__actions">
+              <button type="button" class="mwp-btn" data-size="s" popovertarget="select-menu" id="select-button" disabled>Select</button>
+              <mwp-menu id="select-menu" popover class="mwp-menu">
+                <button type="button" class="mwp-menu__item" data-select="all-but-newest">All except the newest in each group</button>
+                <button type="button" class="mwp-menu__item" data-select="all-but-oldest">All except the oldest in each group</button>
+                <hr class="mwp-menu__sep">
+                <button type="button" class="mwp-menu__item" data-select="all">All</button>
+                <button type="button" class="mwp-menu__item" data-select="none">None</button>
+              </mwp-menu>
+              <button type="button" class="mwp-btn mwp-btn--danger" data-size="s" id="trash" disabled><svg class="mwp-icon" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#trash-2"/></svg> Move to Recycle Bin</button>
+            </div>
+          </header>
+
+          <div class="mwp-empty" id="results-empty">
+            <span class="mwp-empty__icon"><svg class="mwp-icon" data-size="m" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#folder"/></svg></span>
+            <h2 class="mwp-empty__title" id="empty-title">No scan yet</h2>
+            <p class="mwp-empty__sub" id="empty-sub">Add a folder and press Scan.</p>
+          </div>
+
+          <div class="mwp-table-wrap mwp-table-wrap--flush" id="results-wrap" tabindex="0" role="region" aria-labelledby="results-title" hidden>
+            <table class="mwp-table" data-size="s" id="results-table">
+              <thead>
+                <tr>
+                  <th><span class="mwp-muted">Select</span></th>
+                  <th>Name</th>
+                  <th>Folder</th>
+                  <th class="mwp-table__num">Size</th>
+                  <th>Modified</th>
+                  <th><span class="mwp-muted">Show</span></th>
+                </tr>
+              </thead>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

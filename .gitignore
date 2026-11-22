@@ -6,3 +6,4 @@
 node_modules/
 *.profraw
 *.profdata
+czkawka_app/gen/
