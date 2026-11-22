@@ -351,7 +351,6 @@ impl DuplicateFinder {
             let messages = save_cache_to_file_generalized(
                 &get_duplicate_cache_file(self.get_params().hash_type, true),
                 &save_cache_to_hashmap,
-                self.common_data.save_also_as_json,
                 self.get_params().minimal_prehash_cache_file_size,
             );
             self.get_text_messages_mut().extend_with_another_messages(messages);
@@ -531,7 +530,6 @@ impl DuplicateFinder {
         let messages = save_cache_to_file_generalized(
             &get_duplicate_cache_file(self.get_params().hash_type, false),
             &all_results,
-            self.common_data.save_also_as_json,
             self.get_params().minimal_cache_file_size,
         );
         self.get_text_messages_mut().extend_with_another_messages(messages);

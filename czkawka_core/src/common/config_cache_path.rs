@@ -168,52 +168,18 @@ pub fn set_config_cache_path(cache_name: &'static str, config_name: &'static str
     }
 }
 
-pub(crate) fn open_cache_folder(
-    cache_file_name: &str,
-    save_to_cache: bool,
-    use_json: bool,
-    warnings: &mut Vec<String>,
-) -> Option<((Option<File>, PathBuf), (Option<File>, PathBuf))> {
-    let cache_dir = get_config_cache_path()?.cache_folder;
-    let cache_file = cache_dir.join(cache_file_name);
-    let json_file_name = match cache_file_name.strip_suffix(".bin") {
-        Some(stem) => format!("{stem}.json"),
-        None => format!("{cache_file_name}.json"),
-    };
-    let cache_file_json = cache_dir.join(json_file_name);
-
-    let mut file_handler_default = None;
-    let mut file_handler_json = None;
-
-    if save_to_cache {
-        file_handler_default = Some(match OpenOptions::new().truncate(true).write(true).create(true).open(&cache_file) {
-            Ok(t) => t,
-            Err(e) => {
-                warnings.push(flc!("core_cannot_create_or_open_cache_file", file = cache_file.to_string_lossy(), reason = e.to_string()));
-                return None;
-            }
-        });
-        if use_json {
-            file_handler_json = Some(match OpenOptions::new().truncate(true).write(true).create(true).open(&cache_file_json) {
-                Ok(t) => t,
-                Err(e) => {
-                    warnings.push(flc!(
-                        "core_cannot_create_or_open_cache_file",
-                        file = cache_file_json.to_string_lossy(),
-                        reason = e.to_string()
-                    ));
-                    return None;
-                }
-            });
-        }
-    } else if let Ok(t) = OpenOptions::new().read(true).open(&cache_file) {
-        file_handler_default = Some(t);
-    } else if use_json {
-        file_handler_json = Some(OpenOptions::new().read(true).open(&cache_file_json).ok()?);
-    } else {
-        return None;
+pub(crate) fn open_cache_folder(cache_file_name: &str, save_to_cache: bool, warnings: &mut Vec<String>) -> Option<(File, PathBuf)> {
+    let cache_file = get_config_cache_path()?.cache_folder.join(cache_file_name);
+    if !save_to_cache {
+        return Some((OpenOptions::new().read(true).open(&cache_file).ok()?, cache_file));
     }
-    Some(((file_handler_default, cache_file), (file_handler_json, cache_file_json)))
+    match OpenOptions::new().truncate(true).write(true).create(true).open(&cache_file) {
+        Ok(file) => Some((file, cache_file)),
+        Err(e) => {
+            warnings.push(flc!("core_cannot_create_or_open_cache_file", file = cache_file.to_string_lossy(), reason = e.to_string()));
+            None
+        }
+    }
 }
 
 // When initializing logger or settings config/cache folders, logger is not yet initialized,

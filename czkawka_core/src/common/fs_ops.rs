@@ -54,33 +54,8 @@ pub fn check_if_folder_contains_only_empty_folders<P: AsRef<Path>>(path: P) -> R
     Ok(())
 }
 
-/// A wrapper around `trash::delete`. Note that for platforms that do not have native trash support
-/// (Android, iOS), this function will always return an [`Error`]. When the `xdg_portal_trash` feature is
-/// enabled, the portal-based implementation will only be used on Linux; on other desktop OSes the
-/// regular `trash::delete` fallback will be used instead.
 pub fn trash_delete<P: AsRef<Path>>(path: P) -> Result<(), String> {
-    let path = path.as_ref();
-
-    #[cfg(not(any(target_os = "android", target_os = "ios", all(feature = "xdg_portal_trash", target_os = "linux"))))]
-    {
-        trash::delete(path).map_err(|err| err.to_string())
-    }
-
-    #[cfg(all(feature = "xdg_portal_trash", target_os = "linux"))]
-    {
-        use std::os::fd::AsFd;
-        let file = std::fs::OpenOptions::new().write(true).read(true).open(path).map_err(|err| err.to_string())?;
-
-        async_io::block_on(async move { ashpd::desktop::trash::trash_file(&file.as_fd()).await.map_err(|e| e.to_string()) })?;
-
-        Ok(())
-    }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _path = path;
-        Err("trash is not supported on this platform".to_string())
-    }
+    trash::delete(path.as_ref()).map_err(|err| err.to_string())
 }
 
 /// Remove the folder if it only contains empty folders/is empty. If `remove_to_trash` is set, the folder

@@ -28,7 +28,6 @@ pub struct CommonToolData {
     pub(crate) stopped_search: bool,
     pub(crate) use_cache: bool,
     pub(crate) delete_outdated_cache: bool,
-    pub(crate) save_also_as_json: bool,
     pub(crate) use_reference_folders: bool,
     pub(crate) dry_run: bool,
     pub(crate) move_to_trash: bool,
@@ -66,7 +65,6 @@ impl CommonToolData {
             stopped_search: false,
             use_cache: true,
             delete_outdated_cache: true,
-            save_also_as_json: false,
             use_reference_folders: false,
             dry_run: false,
             move_to_trash: false,
@@ -163,13 +161,6 @@ pub trait CommonData {
     }
     fn get_text_messages_mut(&mut self) -> &mut Messages {
         &mut self.get_cd_mut().text_messages
-    }
-
-    fn set_save_also_as_json(&mut self, save_also_as_json: bool) {
-        self.get_cd_mut().save_also_as_json = save_also_as_json;
-    }
-    fn get_save_also_as_json(&self) -> bool {
-        self.get_cd().save_also_as_json
     }
 
     fn set_recursive_search(&mut self, recursive_search: bool) {
@@ -306,7 +297,6 @@ pub trait CommonData {
         println!("Stopped search: {}", self.get_cd().stopped_search);
         println!("Use cache: {}", self.get_cd().use_cache);
         println!("Delete outdated cache: {}", self.get_cd().delete_outdated_cache);
-        println!("Save also as json: {}", self.get_cd().save_also_as_json);
         println!("Delete method: {:?}", self.get_cd().delete_method);
         println!("Use reference folders: {}", self.get_cd().use_reference_folders);
         println!("Dry run: {}", self.get_cd().dry_run);
@@ -334,7 +324,6 @@ mod tests {
         assert!(!tool_data.stopped_search);
         assert!(tool_data.use_cache);
         assert!(tool_data.delete_outdated_cache);
-        assert!(!tool_data.save_also_as_json);
         assert!(!tool_data.use_reference_folders);
         assert!(!tool_data.dry_run);
     }

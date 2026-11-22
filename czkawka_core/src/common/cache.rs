@@ -8,7 +8,6 @@ use std::path::Path;
 use std::{fs, mem};
 
 use bincode::Options;
-pub use cleaning::{CacheCleaningStatistics, CacheProgressCleaning, clean_all_cache_files};
 use fun_time::fun_time;
 use humansize::{BINARY, format_size};
 use indexmap::IndexMap;
@@ -46,16 +45,16 @@ fn get_cache_size(file_name: &Path) -> String {
 }
 
 #[fun_time(message = "save_cache_to_file_generalized", level = "debug")]
-pub fn save_cache_to_file_generalized<T>(cache_file_name: &str, hashmap: &BTreeMap<String, T>, save_also_as_json: bool, minimum_file_size: u64) -> Messages
+pub fn save_cache_to_file_generalized<T>(cache_file_name: &str, hashmap: &BTreeMap<String, T>, minimum_file_size: u64) -> Messages
 where
     T: Serialize + ResultEntry + Sized + Send + Sync,
 {
     let mut text_messages = Messages::new();
-    if let Some(((file_handler, cache_file), (file_handler_json, cache_file_json))) = open_cache_folder(cache_file_name, true, save_also_as_json, &mut text_messages.warnings) {
+    if let Some((file_handler, cache_file)) = open_cache_folder(cache_file_name, true, &mut text_messages.warnings) {
         let hashmap_to_save = hashmap.values().filter(|t| t.get_size() >= minimum_file_size).collect::<Vec<_>>();
 
         {
-            let writer = BufWriter::new(file_handler.expect("Cannot fail, because for saving, this always exists"));
+            let writer = BufWriter::new(file_handler);
             let options = bincode::DefaultOptions::new().with_limit(MEMORY_LIMIT);
             if let Err(e) = options.serialize_into(writer, &hashmap_to_save) {
                 text_messages
@@ -66,22 +65,6 @@ where
             }
             debug!("Saved cache to binary file \"{}\" with size {}", cache_file.to_string_lossy(), get_cache_size(&cache_file));
         }
-        if save_also_as_json && let Some(file_handler_json) = file_handler_json {
-            let writer = BufWriter::new(file_handler_json);
-            if let Err(e) = serde_json::to_writer(writer, &hashmap_to_save) {
-                text_messages
-                    .warnings
-                    .push(flc!("core_failed_to_write_data_to_cache", file = cache_file_json.to_string_lossy(), reason = e.to_string()));
-                debug!("Failed to save cache to file \"{}\" - {e}", cache_file_json.to_string_lossy());
-                return text_messages;
-            }
-            debug!(
-                "Saved cache to json file \"{}\" with size {}",
-                cache_file_json.to_string_lossy(),
-                get_cache_size(&cache_file_json)
-            );
-        }
-
         text_messages.messages.push(flc!("core_properly_saved_cache_entries", count = hashmap.len()));
         debug!("Properly saved to file {} cache entries.", hashmap.len());
     } else {
@@ -204,40 +187,19 @@ where
 {
     let mut text_messages = Messages::new();
 
-    if let Some(((file_handler, cache_file), (file_handler_json, cache_file_json))) = open_cache_folder(cache_file_name, false, true, &mut text_messages.warnings) {
-        let cache_full_name;
-        let mut vec_loaded_entries: Vec<T>;
-        if let Some(file_handler) = file_handler {
-            cache_full_name = cache_file.clone();
-            let reader = BufReader::new(file_handler);
-
-            let options = bincode::DefaultOptions::new().with_limit(MEMORY_LIMIT);
-            vec_loaded_entries = match options.deserialize_from(reader) {
-                Ok(t) => t,
-                Err(e) => {
-                    text_messages
-                        .warnings
-                        .push(flc!("core_failed_to_load_data_from_cache", file = cache_file.to_string_lossy(), reason = e.to_string()));
-                    error!("Failed to load cache from file {} - {e}", cache_file.to_string_lossy());
-                    return (text_messages, None);
-                }
-            };
-        } else {
-            cache_full_name = cache_file_json.clone();
-            let reader = BufReader::new(file_handler_json.expect("This cannot fail, because if file_handler is None, then this cannot be None"));
-            vec_loaded_entries = match serde_json::from_reader(reader) {
-                Ok(t) => t,
-                Err(e) => {
-                    text_messages.warnings.push(flc!(
-                        "core_failed_to_load_data_from_json_cache",
-                        file = cache_file_json.to_string_lossy(),
-                        reason = e.to_string()
-                    ));
-                    debug!("Failed to load cache from file {} - {e}", cache_file_json.to_string_lossy());
-                    return (text_messages, None);
-                }
-            };
-        }
+    if let Some((file_handler, cache_file)) = open_cache_folder(cache_file_name, false, &mut text_messages.warnings) {
+        let reader = BufReader::new(file_handler);
+        let options = bincode::DefaultOptions::new().with_limit(MEMORY_LIMIT);
+        let mut vec_loaded_entries: Vec<T> = match options.deserialize_from(reader) {
+            Ok(t) => t,
+            Err(e) => {
+                text_messages
+                    .warnings
+                    .push(flc!("core_failed_to_load_data_from_cache", file = cache_file.to_string_lossy(), reason = e.to_string()));
+                error!("Failed to load cache from file {} - {e}", cache_file.to_string_lossy());
+                return (text_messages, None);
+            }
+        };
 
         let should_clean = should_clean_cache(cache_file_name);
         debug!(
@@ -278,9 +240,9 @@ where
         text_messages.messages.push(flc!("core_properly_loaded_cache_entries", count = vec_loaded_entries.len()));
 
         debug!(
-            "Loaded cache from file {cache_file_name} (or json alternative) - {} results - size {}",
+            "Loaded cache from file {cache_file_name} - {} results - size {}",
             vec_loaded_entries.len(),
-            get_cache_size(&cache_full_name)
+            get_cache_size(&cache_file)
         );
         return (text_messages, Some(vec_loaded_entries));
     }
@@ -391,7 +353,7 @@ where
         all_results.insert(file_entry.get_path().to_string_lossy().to_string(), file_entry);
     }
 
-    let messages = save_cache_to_file_generalized(cache_file_name, &all_results, common_data.get_save_also_as_json(), 0);
+    let messages = save_cache_to_file_generalized(cache_file_name, &all_results, 0);
     common_data.get_text_messages_mut().extend_with_another_messages(messages);
 }
 
@@ -532,7 +494,7 @@ mod tests {
 
         // Save cache
         let cache_name = format!("test_cache_by_path_{}", std::process::id());
-        let messages = save_cache_to_file_generalized(&cache_name, &cache_to_save, false, 0);
+        let messages = save_cache_to_file_generalized(&cache_name, &cache_to_save, 0);
         assert!(messages.warnings.is_empty(), "Should not have warnings when saving");
         assert!(!messages.messages.is_empty(), "Should have success messages when saving");
 
@@ -583,7 +545,7 @@ mod tests {
 
         // Save cache
         let cache_name = format!("test_cache_by_size_{}", std::process::id());
-        let messages = save_cache_to_file_generalized(&cache_name, &flat_cache, false, 0);
+        let messages = save_cache_to_file_generalized(&cache_name, &flat_cache, 0);
         assert!(messages.warnings.is_empty(), "Should not have warnings when saving");
 
         // Load cache
@@ -608,7 +570,7 @@ mod tests {
 
         // Save cache with minimum file size of 100 bytes
         let cache_name = format!("test_cache_min_size_{}", std::process::id());
-        let messages = save_cache_to_file_generalized(&cache_name, &cache_to_save, false, 100);
+        let messages = save_cache_to_file_generalized(&cache_name, &cache_to_save, 100);
         assert!(messages.warnings.is_empty(), "Should not have warnings");
 
         // Load cache - should only contain large file
@@ -639,7 +601,7 @@ mod tests {
 
         // Save cache
         let cache_name = format!("test_cache_outdated_{}", std::process::id());
-        save_cache_to_file_generalized(&cache_name, &cache_to_save, false, 0);
+        save_cache_to_file_generalized(&cache_name, &cache_to_save, 0);
 
         // Modify the file
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -677,22 +639,6 @@ mod tests {
 
         assert!(loaded_cache.is_none(), "Should return None for nonexistent cache");
         assert!(messages.warnings.is_empty(), "Should not have warnings for nonexistent cache");
-    }
-
-    #[test]
-    fn test_save_cache_with_json() {
-        setup_cache_path();
-        let temp_dir = TempDir::new().unwrap();
-        let temp_file = temp_dir.path().join("test_file.txt");
-        fs::write(&temp_file, "test content").unwrap();
-
-        let mut cache_to_save = BTreeMap::new();
-        cache_to_save.insert("test_key".to_string(), TestEntry::new("/tmp/test", 100, 1000, 42));
-
-        // Save cache with JSON enabled
-        let cache_name = format!("test_cache_json_{}", std::process::id());
-        let messages = save_cache_to_file_generalized(&cache_name, &cache_to_save, true, 0);
-        assert!(messages.warnings.is_empty(), "Should not have warnings when saving with JSON");
     }
 
     #[test]
