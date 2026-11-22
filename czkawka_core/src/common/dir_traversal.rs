@@ -636,8 +636,9 @@ mod tests {
     static NOW: std::sync::LazyLock<SystemTime> = std::sync::LazyLock::new(|| SystemTime::UNIX_EPOCH + Duration::new(100, 0));
     const CONTENT: &[u8; 1] = b"a";
 
+    /// The path as `Directories` stores it: canonical, without the `\\?\` prefix on Windows.
     fn normalize_path(item: &Path) -> PathBuf {
-        let canonicalized = if cfg!(windows) {
+        if cfg!(windows) {
             // Only canonicalize if it's not a network path
             // This can be done by checking if path starts with \\?\UNC\
             if let Ok(dir_can) = item.canonicalize()
@@ -650,12 +651,7 @@ mod tests {
             }
         } else {
             if let Ok(dir) = item.canonicalize() { dir } else { item.to_path_buf() }
-        };
-
-        #[cfg(target_family = "windows")]
-        return crate::common::normalize_windows_path(&canonicalized);
-        #[cfg(not(target_family = "windows"))]
-        return canonicalized;
+        }
     }
 
     fn create_files(dir: &Path) -> io::Result<(PathBuf, PathBuf, PathBuf)> {

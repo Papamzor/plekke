@@ -68,9 +68,6 @@ impl Directories {
             messages.extend_with_another_messages(msg);
 
             if let Some(dir) = dir {
-                #[cfg(target_family = "windows")]
-                let dir = crate::common::normalize_windows_path(&dir);
-
                 match (dir.is_file(), is_reference, is_excluded) {
                     (false, true, false) => self.reference_directories.push(dir),
                     (false, false, false) => self.included_directories.push(dir),
@@ -102,7 +99,8 @@ impl Directories {
             return (None, messages);
         }
 
-        // Try to canonicalize them
+        // Canonical paths carry the on-disk casing on Windows, so configured paths, paths found while
+        // walking the tree and paths shown to the user all compare equal without lowercasing.
         if cfg!(windows) {
             // Only canonicalize if it's not a network path
             // This can be done by checking if path starts with \\?\UNC\
@@ -117,9 +115,6 @@ impl Directories {
                 path = dir;
             }
         }
-
-        #[cfg(target_family = "windows")]
-        let path = crate::common::normalize_windows_path(&path);
 
         (Some(path), messages)
     }
@@ -248,28 +243,16 @@ impl Directories {
     }
 
     pub(crate) fn is_excluded_dir(&self, path: &Path) -> bool {
-        #[cfg(target_family = "windows")]
-        let path = crate::common::normalize_windows_path(path);
-        // We're assuming that `excluded_directories` are already normalized
         self.excluded_directories.iter().any(|p| p.as_path() == path)
     }
 
     pub(crate) fn is_excluded_file(&self, path: &Path) -> bool {
-        #[cfg(target_family = "windows")]
-        let path = crate::common::normalize_windows_path(path);
-        // We're assuming that `excluded_files` are already normalized
         self.excluded_files.iter().any(|p| p.as_path() == path)
     }
 
     // Usually it is not required, because if main directory is excluded, then we don't run check on
     // every single children, different situation is with excluded single file
     pub(crate) fn is_excluded_item_in_dir(&self, path: &Path) -> bool {
-        #[cfg(target_family = "windows")]
-        let path = crate::common::normalize_windows_path(path);
-        #[cfg(target_family = "windows")]
-        let path = &path;
-        // We're assuming that `excluded_directories` are already normalized
-
         self.excluded_directories.iter().any(|p| path.starts_with(p))
     }
 
@@ -434,5 +417,28 @@ mod tests {
         // excluded_directories should be retained as it's inside included_directories
         assert_eq!(d.excluded_directories, vec![PathBuf::from("/base/file")]);
         assert_eq!(d.included_directories, vec![PathBuf::from("/base")]);
+    }
+
+    /// A folder picked as `...\mixedcase` must come back as it is on disk, `...\MixedCase`, so results show real
+    /// names; an excluded folder typed in another case must still exclude the on-disk folder.
+    #[cfg(target_family = "windows")]
+    #[test]
+    fn test_windows_paths_keep_disk_casing_and_still_exclude() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let on_disk = temp.path().canonicalize().unwrap().join("MixedCase");
+        let skipped = on_disk.join("Skip");
+        std::fs::create_dir_all(&skipped).unwrap();
+        let lowercase = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+
+        let mut d = Directories::new();
+        let _ = d.set_included_paths(vec![lowercase(&on_disk)]);
+        let _ = d.set_excluded_paths(vec![lowercase(&skipped)]);
+        d.optimize_directories(true, false).unwrap();
+
+        // The directory walk builds child paths from the stored included folder, as done here.
+        let included = d.included_directories[0].clone();
+        assert!(included.to_string_lossy().ends_with(r"\MixedCase"), "included path lost its casing: {}", included.display());
+        assert!(d.is_excluded_dir(&included.join("Skip")), "excluded folder typed in lowercase no longer excludes");
+        assert!(!d.is_excluded_dir(&included));
     }
 }

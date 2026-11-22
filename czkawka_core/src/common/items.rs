@@ -81,7 +81,7 @@ impl ExcludedItems {
                 continue;
             }
 
-            // On Windows the scanned path is lowercased before matching (see `normalize_windows_path`),
+            // On Windows `is_excluded` lowercases the scanned path before matching (see `normalize_windows_path`),
             // so the expression must be lowercased too, otherwise patterns with uppercase letters never match.
             #[cfg(target_family = "windows")]
             let expression = expression.to_ascii_lowercase();
