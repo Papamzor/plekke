@@ -6,15 +6,13 @@
 dependency. Every scanning tool is implemented here; frontends only configure the
 tool structs and drive them via the `Search` trait.
 
-`TOOLS_NUMBER = 14` (defined in `src/lib.rs`) counts the tools that produce a list of results; `disk_usage` is not included because its result is a size tree.
-
 ---
 
 ## Source Layout
 
 ```
 czkawka_core/src/
-├── lib.rs                         # Crate root; TOOLS_NUMBER constant
+├── lib.rs                         # Crate root; version constants
 ├── localizer_core.rs              # Fluent i18n loader (flc! macro)
 ├── common/
 │   ├── mod.rs                     # Module declarations + re-exports only (no logic of its own)
@@ -43,7 +41,6 @@ czkawka_core/src/
 │   ├── image.rs                   # Image loading helpers
 │   ├── process_utils.rs           # Child-process helpers
 │   ├── logger.rs                  # Logging configuration
-│   └── basic_gui_cli.rs           # Types shared with GUI/CLI boundaries
 ├── tools/
 │   ├── mod.rs                     # Re-exports all tool modules
 │   ├── duplicate/                 # Hash/name/size duplicate detection
@@ -180,7 +177,6 @@ pub struct CommonToolData {
     pub(crate) stopped_search: bool,
     pub(crate) use_cache: bool,
     pub(crate) delete_outdated_cache: bool,
-    pub(crate) save_also_as_json: bool,
     pub(crate) use_reference_folders: bool,
     pub(crate) dry_run: bool,
     pub(crate) move_to_trash: bool,
@@ -264,7 +260,6 @@ if check_if_stop_received(stop_flag) {
 save_cache_to_file_generalized::<T>(
     cache_file_name,    // e.g. "cache_duplicates.bin"
     &btree_map,         // BTreeMap<String, T> (String = canonical path)
-    save_also_as_json,
     minimum_file_size,
 );
 
@@ -341,7 +336,6 @@ Tools that support reference directories: `Duplicate`, `SameMusic`,
 | `similario_core` | Video similarity (sibling path-dependency; replaced `vid_dup_finder_lib`) |
 
 Optional (behind features):
-- `xdg_portal_trash` – FlatPak trash via XDG portal
 - `blake_pure` → `blake3/pure` – pure-Rust Blake3 (no SIMD asm), for targets where the asm
   backend doesn't build
 

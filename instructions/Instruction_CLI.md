@@ -616,10 +616,10 @@ czkawka_cli dup \
     -y
 ```
 
-### Pre-populate video thumbnail cache for Krokiet
+### Pre-populate video thumbnail cache for the desktop app
 
 ```shell
-# Run CLI scan so Krokiet gets instant thumbnails next time it opens
+# Run CLI scan so the desktop app gets instant thumbnails next time it opens
 czkawka_cli video -d /your/videos --generate-thumbnails -N -M -W
 ```
 

@@ -148,11 +148,6 @@ and stop gracefully when it is `true`.
 | `humansize` 2.1    | Human-readable byte sizes        |
 | `czkawka_core`     | All scanning logic               |
 
-### Optional features (forwarded to `czkawka_core`)
-
-- `xdg_portal_trash` – FlatPak-compatible trash (XDG portal)
-
----
 
 ## Comments
 

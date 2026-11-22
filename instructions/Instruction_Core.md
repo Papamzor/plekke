@@ -265,9 +265,9 @@ Unlike cryptographic hashes, perceptual hashes are designed so visually similar 
 
 **Geometric invariance** - when enabled, additional hashes are computed for mirrored, flipped, and/or rotated (90-degree) variants of each image. This allows matching flipped/rotated copies at the cost of more hashing.
 
-**Hash algorithms:** `Gradient` (default in CLI, good for most photos), `Mean` (default in Krokiet), `Blockhash` (does not resize), `VertGradient`, `DoubleGradient`, `Median`.
+**Hash algorithms:** `Gradient` (default in CLI, good for most photos), `Mean`, `Blockhash` (does not resize), `VertGradient`, `DoubleGradient`, `Median`.
 
-**Resize filters:** `Nearest` (fastest, default in CLI), `Lanczos3` (best quality, default in Krokiet), `Triangle`, `Gaussian`, `CatmullRom`.
+**Resize filters:** `Nearest` (fastest, default in CLI), `Lanczos3` (best quality), `Triangle`, `Gaussian`, `CatmullRom`.
 
 **SIMILAR_VALUES** constant - preset `max_difference` values per hash size and similarity level:
 
@@ -554,19 +554,17 @@ for entry in tool.get_video_optimizer_entries() {
 
 ## Cache
 
-Cache files are stored in the shared czkawka cache directory. All frontends (CLI and Krokiet) read and write the same cache.
+Cache files are stored in the shared czkawka cache directory. All frontends (CLI and the desktop app) read and write the same cache.
 
 Notable files:
-- `cache_duplicates_<HASH>.bin/.json` - per-hash-type duplicate cache
-- `cache_similar_image_<SIZE>_<HASH>_<FILTER>_<INVARIANCE>.bin/.json` - perceptual image hashes (one file per unique parameter set)
-- `cache_similar_videos.bin/.json` - video signatures
-- `cache_music_tags.bin/.json`, `cache_music_fingerprints.bin/.json` - music metadata/fingerprints
-- `cache_exif.bin/.json` - EXIF scan results
+- `cache_duplicates_<HASH>.bin` - per-hash-type duplicate cache
+- `cache_similar_image_<SIZE>_<HASH>_<FILTER>_<INVARIANCE>.bin` - perceptual image hashes (one file per unique parameter set)
+- `cache_similar_videos.bin` - video signatures
+- `cache_music_tags.bin`, `cache_music_fingerprints.bin` - music metadata/fingerprints
+- `cache_exif.bin` - EXIF scan results
 - `cache_broken_files.txt` - broken file check results
 
-By default `.bin` (binary/bincode format) is loaded; if the `.bin` file is missing the `.json` fallback is used. Call `set_save_also_as_json(true)` to write both formats.
-
-JSON files can be manually edited (e.g., to update paths when moving a collection to another machine).
+Caches are bincode `.bin` files only.
 
 ---
 
@@ -615,7 +613,6 @@ tool.set_exclude_other_filesystems(false); // Unix only
 // Cache behaviour
 tool.set_use_cache(true);                  // default: true
 tool.set_delete_outdated_cache(true);      // default: true
-tool.set_save_also_as_json(false);         // write .json alongside .bin cache
 
 // Reference paths (supported by: Duplicate, SimilarImages, SimilarVideos, SameMusic)
 tool.set_reference_paths(vec![PathBuf::from("/home/user/Archive")]);
@@ -728,13 +725,10 @@ Paths depend on the `cache_name` and `config_name` strings passed to `set_config
 
 | Frontend | `cache_name` | `config_name` |
 |----------|-------------|---------------|
-| Krokiet | `"Czkawka"` | `"Krokiet"` |
 | CLI | `"Czkawka"` | `"Czkawka"` |
-| Cedinia | `"cedinia"` | `"cedinia"` |
 
 Resulting paths (Linux example, using `directories_next::ProjectDirs`):
 - Cache `"Czkawka"` → `~/.cache/czkawka/`
-- Config `"Krokiet"` → `~/.config/krokiet/`
 - Config `"Czkawka"` → `~/.config/czkawka/`
 
 `set_config_cache_path` **must be called once before any cache or config access**:
