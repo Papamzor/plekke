@@ -62,6 +62,24 @@ fn test_find_duplicates_by_size() {
 }
 
 #[test]
+fn test_hash_mode_same_size_different_content_finds_nothing() {
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path();
+    fs::write(path.join("file1.txt"), b"12345").unwrap();
+    fs::write(path.join("file2.txt"), b"abcde").unwrap();
+
+    let params = DuplicateFinderParameters::new(CheckingMethod::Hash, HashType::Blake3, false, 0, 0, true);
+    let mut finder = DuplicateFinder::new(params);
+    finder.set_included_paths(vec![path.to_path_buf()]);
+    finder.set_minimal_file_size(0);
+    finder.set_use_cache(false);
+    finder.search(&Arc::new(AtomicBool::new(false)), None);
+
+    assert_eq!(finder.get_information().number_of_duplicated_files_by_hash, 0);
+    assert!(!finder.found_any_items(), "size pre-filter matches must not count as found duplicates");
+}
+
+#[test]
 fn test_find_duplicates_by_name() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path();

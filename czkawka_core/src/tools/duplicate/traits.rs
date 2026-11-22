@@ -394,9 +394,15 @@ impl CommonData for DuplicateFinder {
         self.get_params().check_method
     }
     fn found_any_items(&self) -> bool {
-        self.get_information().number_of_duplicated_files_by_hash > 0
-            || self.get_information().number_of_duplicated_files_by_name > 0
-            || self.get_information().number_of_duplicated_files_by_size > 0
-            || self.get_information().number_of_duplicated_files_by_size_name > 0
+        // Hash mode also fills the size counters during its pre-filter, so only the active method counts
+        let info = &self.information;
+        let found = match self.params.check_method {
+            CheckingMethod::Hash => info.number_of_duplicated_files_by_hash,
+            CheckingMethod::Name => info.number_of_duplicated_files_by_name,
+            CheckingMethod::Size => info.number_of_duplicated_files_by_size,
+            CheckingMethod::SizeName => info.number_of_duplicated_files_by_size_name,
+            _ => 0,
+        };
+        found > 0
     }
 }
