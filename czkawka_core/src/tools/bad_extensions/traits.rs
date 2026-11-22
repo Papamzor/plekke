@@ -9,7 +9,7 @@ use fun_time::fun_time;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
 use crate::tools::bad_extensions::{BadExtensions, BadExtensionsFixParams, BadExtensionsParameters, Info};
 
 impl AllTraits for BadExtensions {}
@@ -33,10 +33,6 @@ impl Search for BadExtensions {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 
@@ -56,18 +52,6 @@ impl FixingItems for BadExtensions {
     #[fun_time(message = "fix_items", level = "debug")]
     fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
         self.fix_bad_extensions(fix_params, stop_flag);
-    }
-}
-
-impl DebugPrint for BadExtensions {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        println!("---------------DEBUG PRINT---------------");
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

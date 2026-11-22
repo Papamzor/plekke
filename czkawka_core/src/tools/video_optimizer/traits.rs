@@ -12,7 +12,7 @@ use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
 use crate::flc;
 use crate::tools::video_optimizer::{Info, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters};
 
@@ -30,23 +30,6 @@ impl FixingItems for VideoOptimizer {
     #[fun_time(message = "fix_items", level = "debug")]
     fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
         self.fix_files(stop_flag, progress_sender, fix_params);
-    }
-}
-
-impl DebugPrint for VideoOptimizer {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("### INDIVIDUAL DEBUG PRINT ###");
-        println!("Info: {:?}", self.information);
-        println!("Mode: {:?}", self.params);
-        println!("Video transcode entries: {}", self.video_transcode_result_entries.len());
-        println!("Video crop entries: {}", self.video_crop_result_entries.len());
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 
@@ -148,10 +131,6 @@ impl Search for VideoOptimizer {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 

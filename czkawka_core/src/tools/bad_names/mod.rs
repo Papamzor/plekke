@@ -54,10 +54,6 @@ impl NameIssues {
         }
     }
 
-    pub fn none() -> Self {
-        Self::default()
-    }
-
     pub fn is_empty(&self) -> bool {
         !self.uppercase_extension
             && !self.emoji_used

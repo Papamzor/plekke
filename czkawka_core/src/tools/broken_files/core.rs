@@ -331,7 +331,6 @@ impl BrokenFiles {
                 if let Some((error_message, additional_message)) = ffprobe_errors.iter().find(|(err, _)| combined.contains(err)) {
                     Some(format!("{error_message}{}", additional_message.map(|e| format!(" ({e})")).unwrap_or_default()))
                 } else if !output.status.success() {
-                    // debug_save_file("ffprobe_failed_output.txt", &format!("{} --- \n{}", file_entry.path.to_string_lossy(), combined));
                     Some(format!("ffprobe exited with non-zero status: {}", output.status))
                 } else {
                     None
@@ -396,7 +395,6 @@ impl BrokenFiles {
                 } else if let Some((error_message, additional_message)) = ffmpeg_message.iter().find(|(err, _)| combined.contains(err)) {
                     Some(format!("{error_message}{}", additional_message.map(|e| format!(" ({e})")).unwrap_or_default()))
                 } else if !output.status.success() {
-                    // debug_save_file("ffmpeg_failed_output.txt", &format!("{} --- \n{}", file_entry.path.to_string_lossy(), combined));
                     Some(format!("ffmpeg exited with non-zero status: {}", output.status))
                 } else {
                     None

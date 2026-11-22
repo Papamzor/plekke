@@ -5,7 +5,6 @@ use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
-use fun_time::fun_time;
 
 use crate::common::progress_data::{ProgressData, ToolStage};
 pub const LOOP_DURATION: u32 = 20;
@@ -97,12 +96,6 @@ pub(crate) fn prepare_thread_handler_common(progress_sender: Option<&Sender<Prog
 #[inline]
 pub(crate) fn check_if_stop_received(stop_flag: &Arc<AtomicBool>) -> bool {
     stop_flag.load(atomic::Ordering::Relaxed)
-}
-
-#[fun_time(message = "send_info_and_wait_for_ending_all_threads", level = "debug")]
-pub(crate) fn send_info_and_wait_for_ending_all_threads(progress_thread_run: &Arc<AtomicBool>, progress_thread_handle: JoinHandle<()>) {
-    progress_thread_run.store(false, atomic::Ordering::Relaxed);
-    progress_thread_handle.join().expect("Cannot join progress thread - quite fatal error, but happens rarely");
 }
 
 #[cfg(test)]

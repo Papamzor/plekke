@@ -10,7 +10,7 @@ use crate::common::consts::{AUDIO_FILES_CONTENT_EXTENSIONS, AUDIO_FILES_TAGS_EXT
 use crate::common::model::{CheckingMethod, WorkContinueStatus};
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::flc;
 use crate::tools::same_music::core::format_audio_duration;
 use crate::tools::same_music::{Info, MusicEntry, MusicSimilarity, SameMusic, SameMusicParameters};
@@ -73,24 +73,6 @@ impl Search for SameMusic {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
-    }
-}
-
-impl DebugPrint for SameMusic {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        println!("---------------DEBUG PRINT---------------");
-        println!("Found files music - {}", self.music_entries.len());
-        println!("Found duplicated files music - {}", self.duplicated_music_entries.len());
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

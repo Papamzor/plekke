@@ -25,10 +25,6 @@ pub const TEMP_EXTENSIONS: &[&str] = &[
     ".partial",
 ];
 
-/// Default extensions as a comma-separated string (mirrors `TEMP_EXTENSIONS`).
-/// Used by UIs to pre-populate the extensions field and as the reset value.
-pub const DEFAULT_TEMP_EXTENSIONS_STR: &str = "#,thumbs.db,.bak,~,.tmp,.temp,.ds_store,.crdownload,.part,.cache,.dmp,.download,.partial";
-
 #[derive(Clone, Serialize, Debug)]
 pub struct TemporaryFileEntry {
     pub path: PathBuf,
@@ -68,12 +64,6 @@ impl Default for TemporaryParameters {
         Self {
             extensions: TEMP_EXTENSIONS.iter().map(|s| s.to_string()).collect(),
         }
-    }
-}
-
-impl TemporaryParameters {
-    pub fn new() -> Self {
-        Self::default()
     }
 }
 

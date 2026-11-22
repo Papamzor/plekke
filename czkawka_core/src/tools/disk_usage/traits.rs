@@ -9,7 +9,7 @@ use fun_time::fun_time;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::disk_usage::report::{build_report, write_report};
 use crate::tools::disk_usage::{DiskUsage, DiskUsageParameters, Info};
 
@@ -18,21 +18,6 @@ impl AllTraits for DiskUsage {}
 impl DeletingItems for DiskUsage {
     fn delete_files(&mut self, _stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
         WorkContinueStatus::Continue
-    }
-}
-
-impl DebugPrint for DiskUsage {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("### INDIVIDUAL DEBUG PRINT ###");
-        println!("Info: {:?}", self.information);
-        println!("Params: {:?}", self.params);
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 
@@ -73,10 +58,6 @@ impl Search for DiskUsage {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 

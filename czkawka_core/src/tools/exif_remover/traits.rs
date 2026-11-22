@@ -11,7 +11,7 @@ use crate::common::consts::EXIF_FILES_EXTENSIONS;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
 use crate::tools::exif_remover::{ExifEntry, ExifRemover, ExifRemoverParameters, ExifTagsFixerParams, Info};
 
 impl AllTraits for ExifRemover {}
@@ -35,21 +35,6 @@ impl FixingItems for ExifRemover {
     #[fun_time(message = "fix_items", level = "debug")]
     fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
         self.fix_files(stop_flag, progress_sender, fix_params);
-    }
-}
-
-impl DebugPrint for ExifRemover {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("### INDIVIDUAL DEBUG PRINT ###");
-        println!("Info: {:?}", self.information);
-        println!("Number of files with EXIF: {}", self.information.number_of_files_with_exif);
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 
@@ -107,10 +92,6 @@ impl Search for ExifRemover {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 

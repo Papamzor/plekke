@@ -9,7 +9,7 @@ use fun_time::fun_time;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::empty_files::{EmptyFiles, Info};
 
 impl AllTraits for EmptyFiles {}
@@ -33,23 +33,6 @@ impl Search for EmptyFiles {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
-    }
-}
-
-impl DebugPrint for EmptyFiles {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        println!("---------------DEBUG PRINT---------------");
-        println!("Empty list size - {}", self.empty_files.len());
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

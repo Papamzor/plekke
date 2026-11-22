@@ -93,24 +93,6 @@ pub fn remove_single_file<P: AsRef<Path>>(full_path: P, remove_to_trash: bool) -
     Ok(())
 }
 
-/// Remove a single folder recursively. If `remove_to_trash` is set, the folder will instead be sent to the system's
-/// recycle bin/trash equivalent rather than being deleted.
-///
-/// Note: if used on Android or iOS platforms, ensure `remove_to_trash` is false, as trash is not supported
-/// and will always return an [`Error`].
-pub fn remove_single_folder(full_path: &str, remove_to_trash: bool) -> Result<(), String> {
-    if remove_to_trash {
-        if let Err(e) = trash_delete(full_path) {
-            return Err(flc!("core_error_moving_to_trash", file = full_path, error = e));
-        }
-    } else {
-        if let Err(e) = fs::remove_dir_all(full_path) {
-            return Err(flc!("core_error_removing", file = full_path, error = e.to_string()));
-        }
-    }
-    Ok(())
-}
-
 // Function to create hardlink, when destination exists
 // This is always true in this app, because creating hardlink, to newly created file is pointless
 pub fn make_hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
@@ -208,13 +190,6 @@ pub fn make_file_symlink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::
 #[cfg(not(any(target_family = "unix", target_family = "windows")))]
 pub fn make_file_symlink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     Err(Error::new(io::ErrorKind::Other, "Soft links are not supported on this platform"))
-}
-
-pub fn debug_save_file(path: &str, data: &str) {
-    use std::io::Write;
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{data}");
-    }
 }
 
 #[cfg(test)]

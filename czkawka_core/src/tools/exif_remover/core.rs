@@ -254,11 +254,6 @@ pub fn clean_exif_tags(file_path: &str, tags_to_remove: &[(u16, String)], overri
     .map_err(|e: String| format!("Failed to remove EXIF from file {file_path} - {e}"))
 }
 
-pub fn extract_exif_tags_public(path: &Path) -> Result<Vec<(u16, String)>, String> {
-    let tags = extract_exif_tags(path)?;
-    Ok(tags.into_iter().map(|(_, code, group)| (code, group)).collect())
-}
-
 fn extract_exif_tags(path: &Path) -> Result<Vec<(String, u16, String)>, String> {
     panic::catch_unwind(|| {
         let file_path = Path::new(path);
@@ -284,33 +279,6 @@ fn extract_exif_tags(path: &Path) -> Result<Vec<(String, u16, String)>, String> 
         Ok(tags)
     })
     .map_err(|e| format!("Panic occurred while reading \"{}\" - EXIF: {e:?}", path.to_string_lossy()))?
-}
-
-pub fn file_extension_to_string(extension: FileExtension) -> &'static str {
-    match extension {
-        FileExtension::PNG { .. } => "PNG",
-        FileExtension::JPEG => "JPEG",
-        FileExtension::TIFF => "TIFF",
-        FileExtension::WEBP => "WEBP",
-        FileExtension::NAKED_JXL => "NAKED_JXL",
-        FileExtension::JXL => "JXL",
-        FileExtension::HEIF => "HEIF",
-    }
-}
-pub fn string_to_file_extension(s: &str) -> FileExtension {
-    match s {
-        "PNG" => FileExtension::PNG { as_zTXt_chunk: true },
-        "JPEG" => FileExtension::JPEG,
-        "TIFF" => FileExtension::TIFF,
-        "WEBP" => FileExtension::WEBP,
-        "NAKED_JXL" => FileExtension::NAKED_JXL,
-        "JXL" => FileExtension::JXL,
-        "HEIF" => FileExtension::HEIF,
-        _ => {
-            error!("Unknown file extension string: {s}, defaulting to JPEG");
-            FileExtension::JPEG
-        } // Default to JPEG
-    }
 }
 
 pub fn string_to_exif_tag_group(tag: &str) -> Result<ExifTagGroup, String> {

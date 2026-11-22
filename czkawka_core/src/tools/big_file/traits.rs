@@ -10,7 +10,7 @@ use humansize::{BINARY, format_size};
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::big_file::{BigFile, BigFileParameters, Info, SearchMode};
 
 impl AllTraits for BigFile {}
@@ -23,21 +23,6 @@ impl DeletingItems for BigFile {
             DeleteMethod::None => WorkContinueStatus::Continue,
             _ => unreachable!(),
         }
-    }
-}
-
-impl DebugPrint for BigFile {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("### INDIVIDUAL DEBUG PRINT ###");
-        println!("Info: {:?}", self.information);
-        println!("Number of files to check - {}", self.get_params().number_of_files_to_check);
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 
@@ -91,10 +76,6 @@ impl Search for BigFile {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 

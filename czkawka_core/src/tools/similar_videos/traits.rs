@@ -12,7 +12,7 @@ use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
 use crate::common::model::{CheckingMethod, WorkContinueStatus};
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::flc;
 use crate::tools::similar_videos::core::{format_bitrate_opt, format_duration_opt};
 use crate::tools::similar_videos::{Info, SimilarVideos, SimilarVideosParameters};
@@ -75,10 +75,6 @@ impl Search for SimilarVideos {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 
@@ -94,19 +90,6 @@ impl DeletingItems for SimilarVideos {
         }
         let files_to_delete = self.similar_vectors.clone();
         self.delete_advanced_elements_and_add_to_messages(stop_flag, progress_sender, files_to_delete)
-    }
-}
-
-impl DebugPrint for SimilarVideos {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("---------------DEBUG PRINT---------------");
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

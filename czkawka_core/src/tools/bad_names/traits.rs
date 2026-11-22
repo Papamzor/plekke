@@ -9,7 +9,7 @@ use fun_time::fun_time;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
 use crate::flc;
 use crate::tools::bad_names::{BadNames, BadNamesParameters, Info, NameFixerParams};
 
@@ -44,19 +44,6 @@ impl Search for BadNames {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
-    }
-}
-
-impl DebugPrint for BadNames {
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        self.debug_print_common();
     }
 }
 

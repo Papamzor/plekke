@@ -85,14 +85,7 @@ pub trait CommonData {
     fn get_check_method(&self) -> CheckingMethod {
         CheckingMethod::None
     }
-    fn get_test_type(&self) -> (ToolType, CheckingMethod) {
-        (self.get_cd().tool_type, self.get_check_method())
-    }
     fn found_any_items(&self) -> bool;
-
-    fn get_tool_type(&self) -> ToolType {
-        self.get_cd().tool_type
-    }
 
     fn set_hide_hard_links(&mut self, hide_hard_links: bool) {
         self.get_cd_mut().hide_hard_links = hide_hard_links;
@@ -103,9 +96,6 @@ pub trait CommonData {
 
     fn set_dry_run(&mut self, dry_run: bool) {
         self.get_cd_mut().dry_run = dry_run;
-    }
-    fn get_dry_run(&self) -> bool {
-        self.get_cd().dry_run
     }
 
     fn set_use_cache(&mut self, use_cache: bool) {
@@ -125,9 +115,6 @@ pub trait CommonData {
     fn get_stopped_search(&self) -> bool {
         self.get_cd().stopped_search
     }
-    fn set_stopped_search(&mut self, stopped_search: bool) {
-        self.get_cd_mut().stopped_search = stopped_search;
-    }
 
     fn set_maximal_file_size(&mut self, maximal_file_size: u64) {
         self.get_cd_mut().maximal_file_size = match maximal_file_size {
@@ -135,18 +122,12 @@ pub trait CommonData {
             t => t,
         };
     }
-    fn get_maximal_file_size(&self) -> u64 {
-        self.get_cd().maximal_file_size
-    }
 
     fn set_minimal_file_size(&mut self, minimal_file_size: u64) {
         self.get_cd_mut().minimal_file_size = match minimal_file_size {
             0 => 1,
             t => t,
         };
-    }
-    fn get_minimal_file_size(&self) -> u64 {
-        self.get_cd().minimal_file_size
     }
 
     #[cfg(target_family = "unix")]
@@ -166,9 +147,6 @@ pub trait CommonData {
     fn set_recursive_search(&mut self, recursive_search: bool) {
         self.get_cd_mut().recursive_search = recursive_search;
     }
-    fn get_recursive_search(&self) -> bool {
-        self.get_cd().recursive_search
-    }
 
     fn set_use_reference_folders(&mut self, use_reference_folders: bool) {
         self.get_cd_mut().use_reference_folders = use_reference_folders;
@@ -180,16 +158,10 @@ pub trait CommonData {
     fn set_delete_method(&mut self, delete_method: DeleteMethod) {
         self.get_cd_mut().delete_method = delete_method;
     }
-    fn get_delete_method(&self) -> DeleteMethod {
-        self.get_cd().delete_method
-    }
 
     // Only used for internal deleting - probably only useful in CLI, but not in GUI which probably uses its own delete method selection
     fn set_move_to_trash(&mut self, move_to_trash: bool) {
         self.get_cd_mut().move_to_trash = move_to_trash;
-    }
-    fn get_move_to_trash(&self) -> bool {
-        self.get_cd().move_to_trash
     }
 
     fn set_included_paths(&mut self, included_paths: Vec<PathBuf>) {
@@ -273,39 +245,6 @@ pub trait CommonData {
         delete_item_type: DeleteItemType<T>,
     ) -> DeleteResult {
         deletion::delete_elements(self.get_cd(), stop_flag, progress_sender, delete_item_type)
-    }
-
-    #[expect(clippy::print_stdout)]
-    fn debug_print_common(&self) {
-        println!("---------------DEBUG PRINT COMMON---------------");
-        println!("Included paths(before optimization) - {:?}", self.get_cd().directories.original_included_paths);
-        println!("Excluded paths(before optimization) - {:?}", self.get_cd().directories.original_excluded_paths);
-        println!("Reference paths(before optimization) - {:?}", self.get_cd().directories.original_reference_paths);
-        println!("Included directories(optimized) - {:?}", self.get_cd().directories.included_directories);
-        println!("Included files(optimized) - {:?}", self.get_cd().directories.included_files);
-        println!("Excluded directories(optimized) - {:?}", self.get_cd().directories.excluded_directories);
-        println!("Excluded files(optimized) - {:?}", self.get_cd().directories.excluded_files);
-        println!("Reference directories(optimized) - {:?}", self.get_cd().directories.reference_directories);
-        println!("Reference files(optimized) - {:?}", self.get_cd().directories.reference_files);
-        println!("Tool type: {:?}", self.get_cd().tool_type);
-        println!("Directories: {:?}", self.get_cd().directories);
-        println!("Extensions: {:?}", self.get_cd().extensions);
-        println!("Excluded items: {:?}", self.get_cd().excluded_items);
-        println!("Recursive search: {}", self.get_cd().recursive_search);
-        println!("Maximal file size: {}", self.get_cd().maximal_file_size);
-        println!("Minimal file size: {}", self.get_cd().minimal_file_size);
-        println!("Stopped search: {}", self.get_cd().stopped_search);
-        println!("Use cache: {}", self.get_cd().use_cache);
-        println!("Delete outdated cache: {}", self.get_cd().delete_outdated_cache);
-        println!("Delete method: {:?}", self.get_cd().delete_method);
-        println!("Use reference folders: {}", self.get_cd().use_reference_folders);
-        println!("Dry run: {}", self.get_cd().dry_run);
-        println!("Hide hard links: {}", self.get_cd().hide_hard_links);
-
-        println!("---------------DEBUG PRINT MESSAGES---------------");
-        println!("Errors size - {}", self.get_cd().text_messages.errors.len());
-        println!("Warnings size - {}", self.get_cd().text_messages.warnings.len());
-        println!("Messages size - {}", self.get_cd().text_messages.messages.len());
     }
 }
 

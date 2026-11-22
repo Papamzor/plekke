@@ -110,30 +110,6 @@ impl ToolStage {
         )
     }
 
-    pub fn is_cache_loading_saving(self) -> bool {
-        self.is_cache_loading() || self.is_cache_saving()
-    }
-
-    pub fn is_cache_loading(self) -> bool {
-        matches!(
-            self,
-            Self::Duplicate(DuplicateStage::LoadingPreHashCache(_) | DuplicateStage::LoadingHashCache(_))
-                | Self::SameMusic(_, SameMusicStage::LoadingTagsCache(_) | SameMusicStage::LoadingFingerprintCache(_))
-                | Self::ExifRemover(ExifRemoverStage::LoadingCache(_))
-                | Self::SimilarVideos(_, SimilarVideosStage::LoadingAudioCache(_))
-        )
-    }
-
-    pub fn is_cache_saving(self) -> bool {
-        matches!(
-            self,
-            Self::Duplicate(DuplicateStage::SavingPreHashCache | DuplicateStage::SavingHashCache)
-                | Self::SameMusic(_, SameMusicStage::SavingTagsCache | SameMusicStage::SavingFingerprintCache)
-                | Self::ExifRemover(ExifRemoverStage::SavingCache)
-                | Self::SimilarVideos(_, SimilarVideosStage::SavingAudioCache)
-        )
-    }
-
     pub fn is_indeterminate(self) -> bool {
         matches!(
             self,
@@ -154,20 +130,6 @@ impl ToolStage {
                 )
                 | Self::ExifRemover(ExifRemoverStage::LoadingCache(CacheLoadPhase::Loading) | ExifRemoverStage::SavingCache)
                 | Self::SimilarVideos(_, SimilarVideosStage::LoadingAudioCache(CacheLoadPhase::Loading) | SimilarVideosStage::SavingAudioCache)
-        )
-    }
-
-    pub fn uses_bytes(self) -> bool {
-        matches!(
-            self,
-            Self::Duplicate(DuplicateStage::PreHashing | DuplicateStage::FullHashing)
-                | Self::SimilarImages(SimilarImagesStage::CalculatingHashes)
-                | Self::SameMusic(_, SameMusicStage::CalculatingFingerprints)
-                | Self::SimilarVideos(_, SimilarVideosStage::CalculatingAudioFingerprints)
-                | Self::ExifRemover(ExifRemoverStage::ExtractingTags)
-                | Self::BrokenFilesChecking
-                | Self::EmptyFilesCheckingContent
-                | Self::VideoOptimizer(VideoOptimizerStage::ProcessingVideos)
         )
     }
 
@@ -461,13 +423,6 @@ mod tests {
         assert!(ToolStage::DeletingFiles.is_special_non_tool_stage());
         assert!(!ToolStage::CollectingFiles(CheckingMethod::None).is_special_non_tool_stage());
         assert!(!ToolStage::Duplicate(DuplicateStage::FullHashing).is_special_non_tool_stage());
-    }
-
-    #[test]
-    fn test_cache_detection() {
-        assert!(ToolStage::Duplicate(DuplicateStage::LoadingHashCache(CacheLoadPhase::Loading)).is_cache_loading());
-        assert!(ToolStage::Duplicate(DuplicateStage::SavingHashCache).is_cache_saving());
-        assert!(!ToolStage::Duplicate(DuplicateStage::FullHashing).is_cache_loading_saving());
     }
 
     #[test]

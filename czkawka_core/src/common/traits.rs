@@ -12,10 +12,6 @@ use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::CommonData;
 
-pub trait DebugPrint {
-    fn debug_print(&self);
-}
-
 pub trait PrintResults: CommonData {
     fn write_base_search_paths<T: Write>(&self, writer: &mut T) -> std::io::Result<()> {
         let dirs = &self.get_cd().directories;
@@ -49,15 +45,6 @@ pub trait PrintResults: CommonData {
     }
 
     fn write_results<T: Write>(&self, writer: &mut T) -> std::io::Result<()>;
-
-    #[fun_time(message = "print_results_to_output", level = "debug")]
-    fn print_results_to_output(&self) {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        // Panics here are allowed, because it is used only in CLI
-        self.write_results(&mut handle).expect("Error while writing to stdout");
-        handle.flush().expect("Error while flushing stdout");
-    }
 
     #[fun_time(message = "print_results_to_file", level = "debug")]
     fn print_results_to_file(&self, file_name: &str) -> std::io::Result<()> {
@@ -103,16 +90,6 @@ pub trait PrintResults: CommonData {
         serde_json::to_writer(&mut writer, item_to_serialize)?;
         Ok(())
     }
-
-    fn save_all_in_one(&self, folder: &str, base_file_name: &str) -> std::io::Result<()> {
-        let pretty_name = format!("{folder}/{base_file_name}_pretty.json");
-        self.save_results_to_file_as_json(&pretty_name, true)?;
-        let compact_name = format!("{folder}/{base_file_name}_compact.json");
-        self.save_results_to_file_as_json(&compact_name, false)?;
-        let txt_name = format!("{folder}/{base_file_name}.txt");
-        self.print_results_to_file(&txt_name)?;
-        Ok(())
-    }
 }
 
 pub trait DeletingItems {
@@ -136,4 +113,4 @@ pub trait Search {
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>);
 }
 
-pub trait AllTraits: DebugPrint + PrintResults + DeletingItems + CommonData + Search {}
+pub trait AllTraits: PrintResults + DeletingItems + CommonData + Search {}

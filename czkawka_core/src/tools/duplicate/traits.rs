@@ -11,7 +11,7 @@ use humansize::{BINARY, format_size};
 use crate::common::model::{CheckingMethod, WorkContinueStatus};
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::duplicate::{DuplicateFinder, DuplicateFinderParameters, Info};
 
 impl AllTraits for DuplicateFinder {}
@@ -120,54 +120,6 @@ impl Search for DuplicateFinder {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        self.debug_print();
-    }
-}
-
-impl DebugPrint for DuplicateFinder {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        println!("---------------DEBUG PRINT---------------");
-        println!(
-            "Number of duplicated files by size(in groups) - {} ({})",
-            self.information.number_of_duplicated_files_by_size, self.information.number_of_groups_by_size
-        );
-        println!(
-            "Number of duplicated files by hash(in groups) - {} ({})",
-            self.information.number_of_duplicated_files_by_hash, self.information.number_of_groups_by_hash
-        );
-        println!(
-            "Number of duplicated files by name(in groups) - {} ({})",
-            self.information.number_of_duplicated_files_by_name, self.information.number_of_groups_by_name
-        );
-        println!(
-            "Lost space by size - {} ({} bytes)",
-            format_size(self.information.lost_space_by_size, BINARY),
-            self.information.lost_space_by_size
-        );
-        println!(
-            "Lost space by hash - {} ({} bytes)",
-            format_size(self.information.lost_space_by_hash, BINARY),
-            self.information.lost_space_by_hash
-        );
-
-        println!("### Other");
-
-        println!("Files list size - {}", self.files_with_identical_size.len());
-        println!("Hashed files list size - {}", self.files_with_identical_hashes.len());
-        println!("Files with identical names - {}", self.files_with_identical_names.len());
-        println!("Files with identical size names - {}", self.files_with_identical_size_names.len());
-        println!("Files with identical names referenced - {}", self.files_with_identical_names_referenced.len());
-        println!("Files with identical size names referenced - {}", self.files_with_identical_size_names_referenced.len());
-        println!("Files with identical size referenced - {}", self.files_with_identical_size_referenced.len());
-        println!("Files with identical hashes referenced - {}", self.files_with_identical_hashes_referenced.len());
-        println!("Checking Method - {:?}", self.get_params().check_method);
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

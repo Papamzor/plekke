@@ -1,23 +1,7 @@
-use std::cmp::Ordering;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::common::items::SingleExcludedItem;
-
-pub fn split_path(path: &Path) -> (String, String) {
-    match (path.parent(), path.file_name()) {
-        (Some(dir), Some(file)) => (dir.to_string_lossy().to_string(), file.to_string_lossy().into_owned()),
-        (Some(dir), None) => (dir.to_string_lossy().to_string(), String::new()),
-        (None, _) => (String::new(), String::new()),
-    }
-}
-
-pub fn split_path_compare(path_a: &Path, path_b: &Path) -> Ordering {
-    match path_a.parent().cmp(&path_b.parent()) {
-        Ordering::Equal => path_a.file_name().cmp(&path_b.file_name()),
-        other => other,
-    }
-}
 
 #[expect(clippy::string_slice)]
 #[expect(clippy::indexing_slicing)]

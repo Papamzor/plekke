@@ -65,21 +65,6 @@ impl HardwareEncoder {
         }
     }
 
-    pub const fn as_display_name(self) -> &'static str {
-        match self {
-            Self::None => "None",
-            Self::Nvenc => "NVENC",
-            Self::Vaapi => "VAAPI",
-            Self::Qsv => "QSV",
-            Self::VideoToolbox => "VideoToolbox",
-            Self::Amf => "AMF",
-        }
-    }
-
-    pub const fn all_non_none() -> &'static [Self] {
-        &[Self::Nvenc, Self::Vaapi, Self::Qsv, Self::VideoToolbox, Self::Amf]
-    }
-
     /// Returns encoder-specific quality arguments for the given quality value.
     ///
     /// Each hardware encoder family uses a different rate-control mechanism:

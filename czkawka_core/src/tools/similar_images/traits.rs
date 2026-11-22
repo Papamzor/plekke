@@ -11,7 +11,7 @@ use crate::common::consts::{HEIC_EXTENSIONS, IMAGE_RS_SIMILAR_IMAGES_EXTENSIONS,
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::similar_images::core::get_string_from_similarity;
 use crate::tools::similar_images::{Info, SimilarImages, SimilarImagesParameters};
 
@@ -47,23 +47,6 @@ impl Search for SimilarImages {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
-    }
-}
-
-impl DebugPrint for SimilarImages {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-
-        println!("---------------DEBUG PRINT---------------");
-        self.debug_print_common();
-        println!("-----------------------------------------");
     }
 }
 

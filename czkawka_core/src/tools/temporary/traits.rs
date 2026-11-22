@@ -9,7 +9,7 @@ use fun_time::fun_time;
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DebugPrint, DeletingItems, PrintResults, Search};
+use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
 use crate::tools::temporary::{Info, Temporary, TemporaryParameters};
 
 impl AllTraits for Temporary {}
@@ -33,10 +33,6 @@ impl Search for Temporary {
         })();
 
         self.information.scanning_time = start_time.elapsed();
-
-        if !self.common_data.stopped_search {
-            self.debug_print();
-        }
     }
 }
 
@@ -86,17 +82,5 @@ impl CommonData for Temporary {
     }
     fn found_any_items(&self) -> bool {
         self.information.number_of_temporary_files > 0
-    }
-}
-
-impl DebugPrint for Temporary {
-    #[expect(clippy::print_stdout)]
-    fn debug_print(&self) {
-        if !cfg!(debug_assertions) || cfg!(test) {
-            return;
-        }
-        println!("### Information's");
-        println!("Temporary list size - {}", self.temporary_files.len());
-        self.debug_print_common();
     }
 }

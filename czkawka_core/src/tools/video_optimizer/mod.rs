@@ -276,11 +276,6 @@ impl FileEntry {
     }
 }
 
-pub enum VideoOptimizerEntry {
-    VideoTranscode(VideoTranscodeEntry),
-    VideoCrop(VideoCropEntry),
-}
-
 pub struct VideoOptimizer {
     common_data: CommonToolData,
     information: Info,
