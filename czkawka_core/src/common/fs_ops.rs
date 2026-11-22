@@ -13,42 +13,30 @@ pub fn check_if_folder_contains_only_empty_folders<P: AsRef<Path>>(path: P) -> R
         return Err(flc!("core_not_directory_remove", path = path.to_string_lossy()));
     }
 
-    let mut entries_to_check = Vec::new();
-    let Ok(initial_entry) = path.read_dir() else {
-        return Err(flc!("core_cannot_read_directory", path = path.to_string_lossy()));
-    };
-    for entry in initial_entry {
-        if let Ok(entry) = entry {
-            entries_to_check.push(entry);
-        } else {
-            return Err(flc!("core_cannot_read_entry_from_directory", path = path.to_string_lossy()));
-        }
-    }
-    while let Some(entry) = entries_to_check.pop() {
-        let Some(file_type) = entry.file_type().ok() else {
-            return Err(flc!(
-                "core_unknown_directory_entry",
-                entry = entry.path().to_string_lossy().to_string(),
-                path = path.to_string_lossy()
-            ));
+    let mut folders_to_check = vec![path.to_path_buf()];
+    while let Some(folder) = folders_to_check.pop() {
+        let Ok(read_dir) = folder.read_dir() else {
+            return Err(flc!("core_cannot_read_directory", path = path.to_string_lossy()));
         };
-
-        if !file_type.is_dir() {
-            return Err(flc!(
-                "core_folder_contains_file_inside",
-                entry = entry.path().to_string_lossy().to_string(),
-                folder = path.to_string_lossy()
-            ));
-        }
-        let Ok(internal_read_dir) = entry.path().read_dir() else {
-            return Err(flc!("core_cannot_read_directory", path = path.to_string_lossy().to_string()));
-        };
-        for internal_elements in internal_read_dir {
-            if let Ok(internal_element) = internal_elements {
-                entries_to_check.push(internal_element);
-            } else {
-                return Err(flc!("core_cannot_read_entry_from_directory", path = path.to_string_lossy().to_string()));
+        for entry in read_dir {
+            let Ok(entry) = entry else {
+                return Err(flc!("core_cannot_read_entry_from_directory", path = path.to_string_lossy()));
+            };
+            let Ok(file_type) = entry.file_type() else {
+                return Err(flc!(
+                    "core_unknown_directory_entry",
+                    entry = entry.path().to_string_lossy().to_string(),
+                    path = path.to_string_lossy()
+                ));
+            };
+            if !file_type.is_dir() {
+                return Err(flc!(
+                    "core_folder_contains_file_inside",
+                    entry = entry.path().to_string_lossy().to_string(),
+                    folder = path.to_string_lossy()
+                ));
             }
+            folders_to_check.push(entry.path());
         }
     }
 
@@ -97,28 +85,22 @@ pub fn remove_single_file<P: AsRef<Path>>(full_path: P, remove_to_trash: bool) -
 // Function to create hardlink, when destination exists
 // This is always true in this app, because creating hardlink, to newly created file is pointless
 pub fn make_hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
+    replace_with_link(src.as_ref(), dst.as_ref(), "hardlink", |src, dst| {
+        fs::hard_link(src, dst).map_err(|e| describe_hardlink_error(e, dst))
+    })
+}
+
+// Moves `dst` aside, links `src` at `dst`, then drops the moved original (or restores it on failure).
+fn replace_with_link(src: &Path, dst: &Path, link_kind: &str, link: impl FnOnce(&Path, &Path) -> io::Result<()>) -> io::Result<()> {
     let dst_dir = dst.parent().ok_or_else(|| Error::other("No parent"))?;
-    let mut temp;
-    let mut attempts = MAX_SYMLINK_HARDLINK_ATTEMPTS;
-    loop {
-        temp = dst_dir.join(format!("{}.czkawka_tmp", RandomState::new().hash_one(attempts)));
-        if !temp.exists() {
-            break;
-        }
-        attempts -= 1;
-        if attempts == 0 {
-            return Err(Error::other("Cannot choose temporary file for hardlink creation"));
-        }
-    }
-    fs::rename(dst, temp.as_path())?;
-    match fs::hard_link(src, dst) {
-        Ok(()) => {
-            fs::remove_file(&temp)?;
-            Ok(())
-        }
-        Err(e) => Err(recover_from_failed_link(&temp, dst, describe_hardlink_error(e, dst))),
+    let temp = (0..MAX_SYMLINK_HARDLINK_ATTEMPTS)
+        .map(|attempt| dst_dir.join(format!("{}.czkawka_tmp", RandomState::new().hash_one(attempt))))
+        .find(|temp| !temp.exists())
+        .ok_or_else(|| Error::other(format!("Cannot choose temporary file for {link_kind} creation")))?;
+    fs::rename(dst, &temp)?;
+    match link(src, dst) {
+        Ok(()) => fs::remove_file(&temp),
+        Err(e) => Err(recover_from_failed_link(&temp, dst, e)),
     }
 }
 
@@ -154,38 +136,12 @@ fn describe_hardlink_error(e: io::Error, dst: &Path) -> io::Error {
 
 #[cfg(any(target_family = "unix", target_family = "windows"))]
 pub fn make_file_symlink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-    let dst_dir = dst.parent().ok_or_else(|| Error::other("No parent"))?;
-    let mut temp;
-    let mut attempts = MAX_SYMLINK_HARDLINK_ATTEMPTS;
-    loop {
-        temp = dst_dir.join(format!("{}.czkawka_tmp", RandomState::new().hash_one(attempts)));
-        if !temp.exists() {
-            break;
-        }
-        attempts -= 1;
-        if attempts == 0 {
-            return Err(Error::other("Cannot choose temporary file for symlink creation"));
-        }
-    }
-    fs::rename(dst, temp.as_path())?;
-    let result: Result<_, _>;
     #[cfg(target_family = "unix")]
-    {
-        result = std::os::unix::fs::symlink(src, dst);
-    }
+    use std::os::unix::fs::symlink as symlink_file;
     #[cfg(target_family = "windows")]
-    {
-        result = std::os::windows::fs::symlink_file(src, dst);
-    }
-    match result {
-        Ok(()) => {
-            fs::remove_file(&temp)?;
-            Ok(())
-        }
-        Err(e) => Err(recover_from_failed_link(&temp, dst, e)),
-    }
+    use std::os::windows::fs::symlink_file;
+
+    replace_with_link(src.as_ref(), dst.as_ref(), "symlink", |src, dst| symlink_file(src, dst))
 }
 
 #[cfg(not(any(target_family = "unix", target_family = "windows")))]

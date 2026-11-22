@@ -11,7 +11,6 @@ use rayon::prelude::*;
 
 use crate::common::cache::{load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::config_cache_path::get_config_cache_path;
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage, VideoOptimizerStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -46,41 +45,24 @@ impl VideoOptimizer {
 
     #[fun_time(message = "scan_files", level = "debug")]
     pub(crate) fn scan_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .group_by(|_fe| ())
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .common_data(&self.common_data)
-            .build()
-            .run();
-
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                match &self.params {
-                    VideoOptimizerParameters::VideoTranscode(_) => {
-                        self.video_transcode_test_entries = grouped_file_entries
-                            .into_values()
-                            .flatten()
-                            .map(|fe| (fe.get_path().to_string_lossy().to_string(), fe.into_video_transcode_entry()))
-                            .collect();
-                        info!("Found {} files to check", self.video_transcode_test_entries.len());
-                    }
-                    VideoOptimizerParameters::VideoCrop(_) => {
-                        self.video_crop_test_entries = grouped_file_entries
-                            .into_values()
-                            .flatten()
-                            .map(|fe| (fe.get_path().to_string_lossy().to_string(), fe.into_video_crop_entry()))
-                            .collect();
-                        info!("Found {} files to check", self.video_crop_test_entries.len());
-                    }
-                }
-
-                self.common_data.text_messages.warnings.extend(warnings);
-
-                ControlFlow::Continue(())
+        let files = self.common_data.collect_files(stop_flag, progress_sender, |_| {})?;
+        match &self.params {
+            VideoOptimizerParameters::VideoTranscode(_) => {
+                self.video_transcode_test_entries = files
+                    .into_iter()
+                    .map(|fe| (fe.get_path().to_string_lossy().to_string(), fe.into_video_transcode_entry()))
+                    .collect();
+                info!("Found {} files to check", self.video_transcode_test_entries.len());
             }
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
+            VideoOptimizerParameters::VideoCrop(_) => {
+                self.video_crop_test_entries = files
+                    .into_iter()
+                    .map(|fe| (fe.get_path().to_string_lossy().to_string(), fe.into_video_crop_entry()))
+                    .collect();
+                info!("Found {} files to check", self.video_crop_test_entries.len());
+            }
         }
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "check_files", level = "debug")]

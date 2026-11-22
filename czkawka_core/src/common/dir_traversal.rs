@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::{DirEntry, FileType, Metadata};
+use std::ops::ControlFlow;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -36,162 +37,57 @@ enum EntryType {
     Other,
 }
 
-pub struct DirTraversalBuilder<'b, F> {
-    group_by: Option<F>,
-    root_dirs: Vec<PathBuf>,
-    root_files: Vec<PathBuf>,
-    stop_flag: Option<Arc<AtomicBool>>,
-    progress_sender: Option<&'b Sender<ProgressData>>,
-    minimal_file_size: Option<u64>,
-    maximal_file_size: Option<u64>,
-    collect: Collect,
-    recursive_search: bool,
-    directories: Option<Directories>,
-    excluded_items: Option<ExcludedItems>,
-    extensions: Option<Extensions>,
-    tool_type: ToolType,
-    checking_method: CheckingMethod,
-}
-
-#[derive(Debug)]
-pub struct DirTraversal<'b, F> {
+/// Parallel walk over a tool's included paths; tools adjust the `pub(crate)` fields in the `configure` closure of [`CommonToolData::collect_files`].
+pub(crate) struct DirTraversal<'b, F> {
     group_by: F,
-    root_dirs: Vec<PathBuf>,
-    root_files: Vec<PathBuf>,
-    stop_flag: Arc<AtomicBool>,
+    pub(crate) root_files: Vec<PathBuf>,
+    stop_flag: &'b Arc<AtomicBool>,
     progress_sender: Option<&'b Sender<ProgressData>>,
     recursive_search: bool,
     directories: Directories,
     excluded_items: ExcludedItems,
-    extensions: Extensions,
-    minimal_file_size: u64,
-    maximal_file_size: u64,
+    pub(crate) extensions: Extensions,
+    pub(crate) minimal_file_size: u64,
+    pub(crate) maximal_file_size: u64,
     tool_type: ToolType,
-    checking_method: CheckingMethod,
-    collect: Collect,
+    /// Tags the collecting stage, so the progress label can read e.g. "Scanning size of N file".
+    pub(crate) checking_method: CheckingMethod,
+    pub(crate) collect: Collect,
 }
 
-impl Default for DirTraversalBuilder<'_, ()> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+type GroupedFiles<T> = BTreeMap<T, Vec<FileEntry>>;
 
-impl DirTraversalBuilder<'_, ()> {
-    pub fn new() -> Self {
-        DirTraversalBuilder {
-            group_by: None,
-            root_dirs: Vec::new(),
-            root_files: Vec::new(),
-            stop_flag: None,
-            progress_sender: None,
-            minimal_file_size: None,
-            maximal_file_size: None,
-            collect: Collect::Files,
-            recursive_search: false,
-            directories: None,
-            extensions: None,
-            excluded_items: None,
-            tool_type: ToolType::None,
-            checking_method: CheckingMethod::None,
-        }
-    }
-}
-
-impl<'b, F> DirTraversalBuilder<'b, F> {
-    pub(crate) fn common_data(mut self, common_tool_data: &CommonToolData) -> Self {
-        self.root_dirs = common_tool_data.directories.included_directories.clone();
-        self.root_files = common_tool_data.directories.included_files.clone();
-        self.extensions = Some(common_tool_data.extensions.clone());
-        self.excluded_items = Some(common_tool_data.excluded_items.clone());
-        self.recursive_search = common_tool_data.recursive_search;
-        self.minimal_file_size = Some(common_tool_data.minimal_file_size);
-        self.maximal_file_size = Some(common_tool_data.maximal_file_size);
-        self.tool_type = common_tool_data.tool_type;
-        self.directories = Some(common_tool_data.directories.clone());
-        self
-    }
-
-    pub(crate) fn stop_flag(mut self, stop_flag: &Arc<AtomicBool>) -> Self {
-        self.stop_flag = Some(stop_flag.clone());
-        self
-    }
-
-    pub(crate) fn progress_sender(mut self, progress_sender: Option<&'b Sender<ProgressData>>) -> Self {
-        self.progress_sender = progress_sender;
-        self
-    }
-
-    pub(crate) fn minimal_file_size(mut self, minimal_file_size: u64) -> Self {
-        self.minimal_file_size = Some(minimal_file_size);
-        self
-    }
-
-    pub(crate) fn maximal_file_size(mut self, maximal_file_size: u64) -> Self {
-        self.maximal_file_size = Some(maximal_file_size);
-        self
-    }
-
-    pub(crate) fn collect(mut self, collect: Collect) -> Self {
-        self.collect = collect;
-        self
-    }
-
-    /// Lets a tool tag the file-collecting stage with its checking method, so the
-    /// progress label can read e.g. "Scanning size of N file" instead of the generic text.
-    pub(crate) fn checking_method(mut self, checking_method: CheckingMethod) -> Self {
-        self.checking_method = checking_method;
-        self
-    }
-
-    pub(crate) fn group_by<G, T>(self, group_by: G) -> DirTraversalBuilder<'b, G>
+impl CommonToolData {
+    /// Walks the included paths and groups the found files by `group_by`; traversal warnings go to `text_messages`.
+    pub(crate) fn collect_grouped_files<'b, F, T>(
+        &mut self,
+        stop_flag: &'b Arc<AtomicBool>,
+        progress_sender: Option<&'b Sender<ProgressData>>,
+        group_by: F,
+        configure: impl FnOnce(&mut DirTraversal<'b, F>),
+    ) -> ControlFlow<(), GroupedFiles<T>>
     where
-        G: Fn(&FileEntry) -> T,
+        F: Fn(&FileEntry) -> T,
+        T: Ord,
     {
-        DirTraversalBuilder {
-            group_by: Some(group_by),
-            root_dirs: self.root_dirs,
-            root_files: self.root_files,
-            stop_flag: self.stop_flag,
-            progress_sender: self.progress_sender,
-            directories: self.directories,
-            extensions: self.extensions,
-            excluded_items: self.excluded_items,
-            recursive_search: self.recursive_search,
-            maximal_file_size: self.maximal_file_size,
-            minimal_file_size: self.minimal_file_size,
-            collect: self.collect,
-            tool_type: self.tool_type,
-            checking_method: self.checking_method,
-        }
+        let mut traversal = DirTraversal::new(self, stop_flag, progress_sender, group_by);
+        configure(&mut traversal);
+        let (grouped_file_entries, warnings) = traversal.run()?;
+        self.text_messages.warnings.extend(warnings);
+        ControlFlow::Continue(grouped_file_entries)
     }
 
-    pub(crate) fn build(self) -> DirTraversal<'b, F> {
-        DirTraversal {
-            group_by: self.group_by.expect("could not build"),
-            root_dirs: self.root_dirs,
-            root_files: self.root_files,
-            stop_flag: self.stop_flag.expect("Stop flag must be always initialized"),
-            progress_sender: self.progress_sender,
-            minimal_file_size: self.minimal_file_size.unwrap_or(0),
-            maximal_file_size: self.maximal_file_size.unwrap_or(u64::MAX),
-            collect: self.collect,
-            directories: self.directories.expect("could not build"),
-            excluded_items: self.excluded_items.expect("could not build"),
-            extensions: self.extensions.unwrap_or_default(),
-            recursive_search: self.recursive_search,
-            tool_type: self.tool_type,
-            checking_method: self.checking_method,
-        }
+    /// [`Self::collect_grouped_files`] without grouping.
+    pub(crate) fn collect_files(
+        &mut self,
+        stop_flag: &Arc<AtomicBool>,
+        progress_sender: Option<&Sender<ProgressData>>,
+        configure: impl FnOnce(&mut DirTraversal<'_, fn(&FileEntry)>),
+    ) -> ControlFlow<(), Vec<FileEntry>> {
+        let ungrouped: fn(&FileEntry) = |_| ();
+        let grouped_file_entries = self.collect_grouped_files(stop_flag, progress_sender, ungrouped, configure)?;
+        ControlFlow::Continue(grouped_file_entries.into_values().flatten().collect())
     }
-}
-
-pub enum DirTraversalResult<T: Ord + PartialOrd> {
-    SuccessFiles {
-        warnings: Vec<String>,
-        grouped_file_entries: BTreeMap<T, Vec<FileEntry>>,
-    },
-    Stopped,
 }
 
 fn entry_type(file_type: FileType) -> EntryType {
@@ -214,40 +110,63 @@ fn has_valid_utf8_path(path: &Path, warnings: &mut Vec<String>) -> bool {
     false
 }
 
-impl<F, T> DirTraversal<'_, F>
+impl<'b, F, T> DirTraversal<'b, F>
 where
     F: Fn(&FileEntry) -> T,
-    T: Ord + PartialOrd,
+    T: Ord,
 {
+    fn new(common_data: &CommonToolData, stop_flag: &'b Arc<AtomicBool>, progress_sender: Option<&'b Sender<ProgressData>>, group_by: F) -> Self {
+        Self {
+            group_by,
+            root_files: common_data.directories.included_files.clone(),
+            stop_flag,
+            progress_sender,
+            recursive_search: common_data.recursive_search,
+            directories: common_data.directories.clone(),
+            excluded_items: common_data.excluded_items.clone(),
+            extensions: common_data.extensions.clone(),
+            minimal_file_size: common_data.minimal_file_size,
+            maximal_file_size: common_data.maximal_file_size,
+            tool_type: common_data.tool_type,
+            checking_method: CheckingMethod::None,
+            collect: Collect::Files,
+        }
+    }
+
+    /// Returns the grouped files plus the warnings met on the way, or `Break` when stopped.
     #[fun_time(message = "run(collecting files/dirs)", level = "debug")]
-    pub(crate) fn run(self) -> DirTraversalResult<T> {
+    fn run(self) -> ControlFlow<(), (GroupedFiles<T>, Vec<String>)> {
         assert_ne!(self.tool_type, ToolType::None, "Tool type cannot be None");
 
-        let mut all_warnings = Vec::new();
-        let mut grouped_file_entries: BTreeMap<T, Vec<FileEntry>> = BTreeMap::new();
-
-        // Add root folders and files for finding
-        let mut folders_to_check: Vec<PathBuf> = self.root_dirs.clone();
-        let mut files_to_check: Vec<PathBuf> = self.root_files.clone();
-
-        let collect_stage = if self.tool_type == ToolType::EmptyFolders {
-            ToolStage::CollectingFolders
-        } else {
-            ToolStage::CollectingFiles(self.checking_method)
-        };
-        let progress_handler = prepare_thread_handler_common(self.progress_sender, collect_stage, 0, 0);
-
         let DirTraversal {
-            collect,
+            group_by,
+            root_files,
+            stop_flag,
+            progress_sender,
+            recursive_search,
             directories,
             excluded_items,
             extensions,
-            recursive_search,
             minimal_file_size,
             maximal_file_size,
-            stop_flag,
-            ..
+            tool_type,
+            checking_method,
+            collect,
         } = self;
+
+        let mut all_warnings = Vec::new();
+        let mut grouped_file_entries: GroupedFiles<T> = BTreeMap::new();
+
+        // Add root folders and files for finding
+        let mut folders_to_check: Vec<PathBuf> = directories.included_directories.clone();
+        let mut files_to_check: Vec<PathBuf> = root_files;
+
+        let collect_stage = if tool_type == ToolType::EmptyFolders {
+            ToolStage::CollectingFolders
+        } else {
+            ToolStage::CollectingFiles(checking_method)
+        };
+        let progress_handler = prepare_thread_handler_common(progress_sender, collect_stage, 0, 0);
 
         let mut file_results = Vec::new();
         // File traversal
@@ -285,15 +204,15 @@ where
         }
         file_results.sort_by_cached_key(|fe| fe.path.to_str().expect("path validated as UTF-8 while collecting file entries").to_owned());
         for fe in file_results {
-            let key = (self.group_by)(&fe);
+            let key = group_by(&fe);
             grouped_file_entries.entry(key).or_default().push(fe);
         }
 
         // Folder traversal
         while !folders_to_check.is_empty() {
-            if check_if_stop_received(&stop_flag) {
+            if check_if_stop_received(stop_flag) {
                 progress_handler.join_thread();
-                return DirTraversalResult::Stopped;
+                return ControlFlow::Break(());
             }
 
             let segments: Vec<_> = folders_to_check
@@ -311,7 +230,7 @@ where
                     let mut counter = 0;
                     // Check every sub folder/file/link etc.
                     for entry in read_dir {
-                        if check_if_stop_received(&stop_flag) {
+                        if check_if_stop_received(stop_flag) {
                             return None;
                         }
 
@@ -367,7 +286,7 @@ where
                 all_warnings.extend(warnings);
                 fe_result.sort_by_cached_key(|fe| fe.path.to_str().expect("path validated as UTF-8 while collecting file entries").to_owned());
                 for fe in fe_result {
-                    let key = (self.group_by)(&fe);
+                    let key = group_by(&fe);
                     grouped_file_entries.entry(key).or_default().push(fe);
                 }
             }
@@ -377,12 +296,7 @@ where
 
         debug!("Collected {} files", grouped_file_entries.values().map(Vec::len).sum::<usize>());
 
-        match collect {
-            Collect::Files | Collect::InvalidSymlinks => DirTraversalResult::SuccessFiles {
-                grouped_file_entries,
-                warnings: all_warnings,
-            },
-        }
+        ControlFlow::Continue((grouped_file_entries, all_warnings))
     }
 }
 
@@ -604,52 +518,40 @@ fn process_symlink_in_symlink_mode_path_check(
 }
 
 pub(crate) fn common_read_dir(current_folder: &Path, warnings: &mut Vec<String>) -> Option<Vec<Result<DirEntry, std::io::Error>>> {
-    match fs::read_dir(current_folder) {
-        Ok(t) => Some(t.collect()),
-        Err(e) => {
-            warnings.push(flc!("core_cannot_open_dir", dir = current_folder.to_string_lossy().to_string(), reason = e.to_string()));
-            None
-        }
-    }
+    fs::read_dir(current_folder)
+        .map(Iterator::collect)
+        .map_err(|e| warnings.push(flc!("core_cannot_open_dir", dir = current_folder.to_string_lossy().to_string(), reason = e.to_string())))
+        .ok()
 }
 pub(crate) fn common_get_entry_data<'a>(entry: &'a Result<DirEntry, std::io::Error>, warnings: &mut Vec<String>, current_folder: &Path) -> Option<&'a DirEntry> {
-    let entry_data = match entry {
-        Ok(t) => t,
-        Err(e) => {
+    entry
+        .as_ref()
+        .map_err(|e| {
             warnings.push(flc!(
                 "core_cannot_read_entry_dir",
                 dir = current_folder.to_string_lossy().to_string(),
                 reason = e.to_string()
             ));
-            return None;
-        }
-    };
-    Some(entry_data)
+        })
+        .ok()
 }
 pub(crate) fn common_get_metadata_dir(entry_data: &DirEntry, warnings: &mut Vec<String>, current_folder: &Path) -> Option<Metadata> {
-    let metadata: Metadata = match entry_data.metadata() {
-        Ok(t) => t,
-        Err(e) => {
+    entry_data
+        .metadata()
+        .map_err(|e| {
             warnings.push(flc!(
                 "core_cannot_read_metadata_dir",
                 dir = current_folder.to_string_lossy().to_string(),
                 reason = e.to_string()
             ));
-            return None;
-        }
-    };
-    Some(metadata)
+        })
+        .ok()
 }
 
 pub(crate) fn common_get_metadata_from_path(path: &Path, warnings: &mut Vec<String>) -> Option<Metadata> {
-    let metadata: Metadata = match fs::metadata(path) {
-        Ok(t) => t,
-        Err(e) => {
-            warnings.push(flc!("core_cannot_read_metadata_file", file = path.to_string_lossy().to_string(), reason = e.to_string()));
-            return None;
-        }
-    };
-    Some(metadata)
+    fs::metadata(path)
+        .map_err(|e| warnings.push(flc!("core_cannot_read_metadata_file", file = path.to_string_lossy().to_string(), reason = e.to_string())))
+        .ok()
 }
 
 pub(crate) fn get_modified_time(metadata: &Metadata, warnings: &mut Vec<String>, current_file_name: &Path, is_folder: bool) -> u64 {
@@ -782,43 +684,28 @@ mod tests {
         common_data.directories.set_included_paths([dir.path().to_owned()].to_vec());
         common_data.set_minimal_file_size(0);
 
-        match DirTraversalBuilder::new()
-            .group_by(|_fe| ())
-            .stop_flag(&Arc::default())
-            .common_data(&common_data)
-            .build()
-            .run()
-        {
-            DirTraversalResult::SuccessFiles {
-                warnings: _,
-                grouped_file_entries,
-            } => {
-                let actual: IndexSet<_> = grouped_file_entries.into_values().flatten().collect();
-                assert_eq!(
-                    IndexSet::from([
-                        FileEntry {
-                            path: normalize_path(&src),
-                            size: 1,
-                            modified_date: secs,
-                        },
-                        FileEntry {
-                            path: normalize_path(&hard),
-                            size: 1,
-                            modified_date: secs,
-                        },
-                        FileEntry {
-                            path: normalize_path(&other_file),
-                            size: 1,
-                            modified_date: secs,
-                        },
-                    ]),
-                    actual
-                );
-            }
-            DirTraversalResult::Stopped => {
-                panic!("Expect SuccessFiles.");
-            }
-        }
+        let grouped_file_entries = run_grouped(&common_data, |_fe| ());
+        let actual: IndexSet<_> = grouped_file_entries.into_values().flatten().collect();
+        assert_eq!(
+            IndexSet::from([
+                FileEntry {
+                    path: normalize_path(&src),
+                    size: 1,
+                    modified_date: secs,
+                },
+                FileEntry {
+                    path: normalize_path(&hard),
+                    size: 1,
+                    modified_date: secs,
+                },
+                FileEntry {
+                    path: normalize_path(&other_file),
+                    size: 1,
+                    modified_date: secs,
+                },
+            ]),
+            actual
+        );
         Ok(())
     }
 
@@ -843,17 +730,15 @@ mod tests {
         Ok((global_file, other_file, other_dir))
     }
 
+    fn run_grouped<F: Fn(&FileEntry) -> T, T: Ord>(common_data: &CommonToolData, group_by: F) -> GroupedFiles<T> {
+        let ControlFlow::Continue((grouped_file_entries, _warnings)) = DirTraversal::new(common_data, &Arc::default(), None, group_by).run() else {
+            panic!("Expect SuccessFiles.");
+        };
+        grouped_file_entries
+    }
+
     fn run_traversal(common_data: &CommonToolData) -> Vec<FileEntry> {
-        match DirTraversalBuilder::new()
-            .group_by(|_fe| ())
-            .stop_flag(&Arc::default())
-            .common_data(common_data)
-            .build()
-            .run()
-        {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, .. } => grouped_file_entries.into_values().flatten().collect(),
-            DirTraversalResult::Stopped => panic!("Expect SuccessFiles."),
-        }
+        run_grouped(common_data, |_fe| ()).into_values().flatten().collect()
     }
 
     #[test]
@@ -981,38 +866,23 @@ mod tests {
         common_data.directories.set_included_paths([dir.path().to_owned()].to_vec());
         common_data.set_minimal_file_size(0);
 
-        match DirTraversalBuilder::new()
-            .group_by(inode)
-            .stop_flag(&Arc::default())
-            .common_data(&common_data)
-            .build()
-            .run()
-        {
-            DirTraversalResult::SuccessFiles {
-                warnings: _,
-                grouped_file_entries,
-            } => {
-                let actual: IndexSet<_> = grouped_file_entries.into_iter().flat_map(take_1_per_inode).collect();
-                assert_eq!(
-                    IndexSet::from([
-                        FileEntry {
-                            path: normalize_path(&src),
-                            size: 1,
-                            modified_date: secs,
-                        },
-                        FileEntry {
-                            path: normalize_path(&other),
-                            size: 1,
-                            modified_date: secs,
-                        },
-                    ]),
-                    actual
-                );
-            }
-            DirTraversalResult::Stopped => {
-                panic!("Expect SuccessFiles.");
-            }
-        }
+        let grouped_file_entries = run_grouped(&common_data, inode);
+        let actual: IndexSet<_> = grouped_file_entries.into_iter().flat_map(take_1_per_inode).collect();
+        assert_eq!(
+            IndexSet::from([
+                FileEntry {
+                    path: normalize_path(&src),
+                    size: 1,
+                    modified_date: secs,
+                },
+                FileEntry {
+                    path: normalize_path(&other),
+                    size: 1,
+                    modified_date: secs,
+                },
+            ]),
+            actual
+        );
         Ok(())
     }
 
@@ -1028,43 +898,28 @@ mod tests {
         common_data.directories.set_included_paths(vec![dir_path]);
         common_data.set_minimal_file_size(0);
 
-        match DirTraversalBuilder::new()
-            .group_by(inode)
-            .stop_flag(&Arc::default())
-            .common_data(&common_data)
-            .build()
-            .run()
-        {
-            DirTraversalResult::SuccessFiles {
-                warnings: _,
-                grouped_file_entries,
-            } => {
-                let actual: IndexSet<_> = grouped_file_entries.into_iter().flat_map(take_1_per_inode).collect();
-                assert_eq!(
-                    IndexSet::from([
-                        FileEntry {
-                            path: src,
-                            size: 1,
-                            modified_date: secs,
-                        },
-                        FileEntry {
-                            path: hard,
-                            size: 1,
-                            modified_date: secs,
-                        },
-                        FileEntry {
-                            path: other,
-                            size: 1,
-                            modified_date: secs,
-                        },
-                    ]),
-                    actual
-                );
-            }
-            DirTraversalResult::Stopped => {
-                panic!("Expect SuccessFiles.");
-            }
-        }
+        let grouped_file_entries = run_grouped(&common_data, inode);
+        let actual: IndexSet<_> = grouped_file_entries.into_iter().flat_map(take_1_per_inode).collect();
+        assert_eq!(
+            IndexSet::from([
+                FileEntry {
+                    path: src,
+                    size: 1,
+                    modified_date: secs,
+                },
+                FileEntry {
+                    path: hard,
+                    size: 1,
+                    modified_date: secs,
+                },
+                FileEntry {
+                    path: other,
+                    size: 1,
+                    modified_date: secs,
+                },
+            ]),
+            actual
+        );
         Ok(())
     }
 

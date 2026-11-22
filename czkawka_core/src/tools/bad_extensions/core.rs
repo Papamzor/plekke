@@ -11,7 +11,6 @@ use log::debug;
 use mime_guess::get_mime_extensions;
 use rayon::prelude::*;
 
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::{FileEntry, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -35,24 +34,8 @@ impl BadExtensions {
 
     #[fun_time(message = "check_files", level = "debug")]
     pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .common_data(&self.common_data)
-            .group_by(|_fe| ())
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .build()
-            .run();
-
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.files_to_check = grouped_file_entries.into_values().flatten().collect();
-                self.common_data.text_messages.warnings.extend(warnings);
-
-                ControlFlow::Continue(())
-            }
-
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
-        }
+        self.files_to_check = self.common_data.collect_files(stop_flag, progress_sender, |_| {})?;
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "look_for_bad_extensions_files", level = "debug")]

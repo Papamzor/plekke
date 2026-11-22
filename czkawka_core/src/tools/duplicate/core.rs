@@ -11,7 +11,6 @@ use log::debug;
 use rayon::prelude::*;
 
 use crate::common::cache::{CACHE_DUPLICATE_PREHASH_VERSION, CACHE_DUPLICATE_VERSION, load_and_split_cache_generalized_by_size, save_cache_to_file_generalized};
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::{CheckingMethod, FileEntry, HashType, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, DuplicateStage, ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -58,47 +57,35 @@ impl DuplicateFinder {
             }
         };
 
-        let result = DirTraversalBuilder::new()
-            .common_data(&self.common_data)
-            .group_by(group_by_func)
-            .checking_method(CheckingMethod::Name)
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .build()
-            .run();
+        let grouped_file_entries = self
+            .common_data
+            .collect_grouped_files(stop_flag, progress_sender, group_by_func, |traversal| traversal.checking_method = CheckingMethod::Name)?;
 
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.common_data.text_messages.warnings.extend(warnings);
-
-                // Create new BTreeMap without single size entries(files have not duplicates)
-                self.files_with_identical_names = grouped_file_entries
-                    .into_iter()
-                    .filter_map(|(name, vector)| {
-                        if vector.len() > 1 {
-                            Some((name, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Apply reference-folder filtering for name-based duplicate groups
-                if self.common_data.use_reference_folders {
-                    let vec = self
-                        .common_data
-                        .directories
-                        .filter_reference_folders(mem::take(&mut self.files_with_identical_names).into_values().collect());
-                    for (fe, vec_fe) in vec {
-                        self.files_with_identical_names_referenced.insert(fe.path.to_string_lossy().to_string(), (fe, vec_fe));
-                    }
+        // Create new BTreeMap without single size entries(files have not duplicates)
+        self.files_with_identical_names = grouped_file_entries
+            .into_iter()
+            .filter_map(|(name, vector)| {
+                if vector.len() > 1 {
+                    Some((name, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
+                } else {
+                    None
                 }
-                self.calculate_name_stats();
+            })
+            .collect();
 
-                ControlFlow::Continue(())
+        // Apply reference-folder filtering for name-based duplicate groups
+        if self.common_data.use_reference_folders {
+            let vec = self
+                .common_data
+                .directories
+                .filter_reference_folders(mem::take(&mut self.files_with_identical_names).into_values().collect());
+            for (fe, vec_fe) in vec {
+                self.files_with_identical_names_referenced.insert(fe.path.to_string_lossy().to_string(), (fe, vec_fe));
             }
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
+        self.calculate_name_stats();
+
+        ControlFlow::Continue(())
     }
 
     fn calculate_name_stats(&mut self) {
@@ -141,48 +128,35 @@ impl DuplicateFinder {
             }
         };
 
-        let result = DirTraversalBuilder::new()
-            .common_data(&self.common_data)
-            .group_by(group_by_func)
-            .checking_method(CheckingMethod::SizeName)
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .build()
-            .run();
+        let grouped_file_entries = self
+            .common_data
+            .collect_grouped_files(stop_flag, progress_sender, group_by_func, |traversal| traversal.checking_method = CheckingMethod::SizeName)?;
 
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.common_data.text_messages.warnings.extend(warnings);
-
-                self.files_with_identical_size_names = grouped_file_entries
-                    .into_iter()
-                    .filter_map(|(size_name, vector)| {
-                        if vector.len() > 1 {
-                            Some((size_name, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Apply reference-folder filtering for size+name-based duplicate groups
-                if self.common_data.use_reference_folders {
-                    let vec = self
-                        .common_data
-                        .directories
-                        .filter_reference_folders(mem::take(&mut self.files_with_identical_size_names).into_values().collect());
-                    for (fe, vec_fe) in vec {
-                        self.files_with_identical_size_names_referenced
-                            .insert((fe.size, fe.path.to_string_lossy().to_string()), (fe, vec_fe));
-                    }
+        self.files_with_identical_size_names = grouped_file_entries
+            .into_iter()
+            .filter_map(|(size_name, vector)| {
+                if vector.len() > 1 {
+                    Some((size_name, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
+                } else {
+                    None
                 }
-                self.calculate_size_name_stats();
+            })
+            .collect();
 
-                ControlFlow::Continue(())
+        // Apply reference-folder filtering for size+name-based duplicate groups
+        if self.common_data.use_reference_folders {
+            let vec = self
+                .common_data
+                .directories
+                .filter_reference_folders(mem::take(&mut self.files_with_identical_size_names).into_values().collect());
+            for (fe, vec_fe) in vec {
+                self.files_with_identical_size_names_referenced
+                    .insert((fe.size, fe.path.to_string_lossy().to_string()), (fe, vec_fe));
             }
-
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
+        self.calculate_size_name_stats();
+
+        ControlFlow::Continue(())
     }
 
     fn calculate_size_name_stats(&mut self) {
@@ -203,87 +177,74 @@ impl DuplicateFinder {
 
     #[fun_time(message = "check_files_size", level = "debug")]
     pub(crate) fn check_files_size(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .common_data(&self.common_data)
-            .group_by(|fe| fe.size)
-            .checking_method(CheckingMethod::Size)
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .build()
-            .run();
+        let grouped_file_entries =
+            self.common_data
+                .collect_grouped_files(stop_flag, progress_sender, |fe| fe.size, |traversal| traversal.checking_method = CheckingMethod::Size)?;
 
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.common_data.text_messages.warnings.extend(warnings);
+        let grouped_file_entries: Vec<(u64, Vec<FileEntry>)> = grouped_file_entries.into_iter().collect();
+        let rayon_max_len = if self.get_hide_hard_links() { 3 } else { 100 };
 
-                let grouped_file_entries: Vec<(u64, Vec<FileEntry>)> = grouped_file_entries.into_iter().collect();
-                let rayon_max_len = if self.get_hide_hard_links() { 3 } else { 100 };
+        let start_time = Instant::now();
+        // We only gather files with more than 1 entry, because only this will be later used
+        let initial_size = grouped_file_entries
+            .iter()
+            .map(|(_size, vec)| if vec.len() > 1 { vec.len() as u64 } else { 0 })
+            .sum::<u64>();
 
-                let start_time = Instant::now();
-                // We only gather files with more than 1 entry, because only this will be later used
-                let initial_size = grouped_file_entries
-                    .iter()
-                    .map(|(_size, vec)| if vec.len() > 1 { vec.len() as u64 } else { 0 })
-                    .sum::<u64>();
-
-                let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::Duplicate(DuplicateStage::HidingHardLinks), grouped_file_entries.len(), 0);
-                self.files_with_identical_size = grouped_file_entries
-                    .into_par_iter()
-                    .with_max_len(rayon_max_len)
-                    .map(|(size, vec)| {
-                        if check_if_stop_received(stop_flag) {
-                            return None;
-                        }
-                        progress_handler.increase_items(1);
-                        Some((size, vec))
-                    })
-                    .while_some()
-                    .filter_map(|(size, vec)| {
-                        if vec.len() <= 1 {
-                            return None;
-                        }
-
-                        let vector = if self.get_hide_hard_links() { filter_hard_links(vec) } else { vec };
-
-                        if vector.len() > 1 {
-                            Some((size, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                progress_handler.join_thread();
-
+        let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::Duplicate(DuplicateStage::HidingHardLinks), grouped_file_entries.len(), 0);
+        self.files_with_identical_size = grouped_file_entries
+            .into_par_iter()
+            .with_max_len(rayon_max_len)
+            .map(|(size, vec)| {
                 if check_if_stop_received(stop_flag) {
-                    return ControlFlow::Break(());
+                    return None;
+                }
+                progress_handler.increase_items(1);
+                Some((size, vec))
+            })
+            .while_some()
+            .filter_map(|(size, vec)| {
+                if vec.len() <= 1 {
+                    return None;
                 }
 
-                let filtered_size = self.files_with_identical_size.values().map(|v| v.len() as u64).sum::<u64>();
-                debug!(
-                    "check_file_size - filtered hard links in {:?}, removed {} hardlinks ({} -> {})",
-                    start_time.elapsed(),
-                    initial_size - filtered_size,
-                    initial_size,
-                    filtered_size
-                );
+                let vector = if self.get_hide_hard_links() { filter_hard_links(vec) } else { vec };
 
-                self.filter_reference_folders_by_size();
-                self.calculate_size_stats();
+                if vector.len() > 1 {
+                    Some((size, vector.into_iter().map(FileEntry::into_duplicate_entry).collect()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-                debug!(
-                    "check_file_size - after calculating size stats/duplicates, found in {} groups, {} files with same size | referenced {} groups, {} files",
-                    self.files_with_identical_size.len(),
-                    self.files_with_identical_size.values().map(Vec::len).sum::<usize>(),
-                    self.files_with_identical_size_referenced.len(),
-                    self.files_with_identical_size_referenced.values().map(|(_fe, vec)| vec.len()).sum::<usize>()
-                );
+        progress_handler.join_thread();
 
-                ControlFlow::Continue(())
-            }
-
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
+        if check_if_stop_received(stop_flag) {
+            return ControlFlow::Break(());
         }
+
+        let filtered_size = self.files_with_identical_size.values().map(|v| v.len() as u64).sum::<u64>();
+        debug!(
+            "check_file_size - filtered hard links in {:?}, removed {} hardlinks ({} -> {})",
+            start_time.elapsed(),
+            initial_size - filtered_size,
+            initial_size,
+            filtered_size
+        );
+
+        self.filter_reference_folders_by_size();
+        self.calculate_size_stats();
+
+        debug!(
+            "check_file_size - after calculating size stats/duplicates, found in {} groups, {} files with same size | referenced {} groups, {} files",
+            self.files_with_identical_size.len(),
+            self.files_with_identical_size.values().map(Vec::len).sum::<usize>(),
+            self.files_with_identical_size_referenced.len(),
+            self.files_with_identical_size_referenced.values().map(|(_fe, vec)| vec.len()).sum::<usize>()
+        );
+
+        ControlFlow::Continue(())
     }
 
     fn calculate_size_stats(&mut self) {

@@ -15,7 +15,7 @@ use rayon::prelude::*;
 
 use crate::common::bk_tree::BKTree;
 use crate::common::cache::{CACHE_IMAGE_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult, inode, take_1_per_inode};
+use crate::common::dir_traversal::{inode, take_1_per_inode};
 use crate::common::image::get_dynamic_image_from_path;
 use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, SimilarImagesStage, ToolStage};
@@ -40,58 +40,44 @@ impl SimilarImages {
 
     #[fun_time(message = "check_for_similar_images", level = "debug")]
     pub(crate) fn check_for_similar_images(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .group_by(inode)
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .common_data(&self.common_data)
-            .build()
-            .run();
+        let grouped_file_entries = self.common_data.collect_grouped_files(stop_flag, progress_sender, inode, |_| {})?;
 
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.common_data.text_messages.warnings.extend(warnings);
-
-                let progress_handler = prepare_thread_handler_common(
-                    progress_sender,
-                    ToolStage::SimilarImages(SimilarImagesStage::HidingHardLinks),
-                    grouped_file_entries.len(),
-                    0,
-                );
-                let hide_hard_links = self.get_hide_hard_links();
-                self.images_to_check = grouped_file_entries
-                    .into_par_iter()
-                    .map(|(inode, fes)| {
-                        if check_if_stop_received(stop_flag) {
-                            return None;
-                        }
-                        progress_handler.increase_items(1);
-                        Some((inode, fes))
-                    })
-                    .while_some()
-                    .flat_map(if hide_hard_links { take_1_per_inode } else { |(_, fes)| fes })
-                    .map(|fe| {
-                        let fe_str = fe.path.to_string_lossy().to_string();
-                        let image_entry = fe.into_images_entry();
-
-                        (fe_str, image_entry)
-                    })
-                    .collect();
-
-                progress_handler.join_thread();
-
+        let progress_handler = prepare_thread_handler_common(
+            progress_sender,
+            ToolStage::SimilarImages(SimilarImagesStage::HidingHardLinks),
+            grouped_file_entries.len(),
+            0,
+        );
+        let hide_hard_links = self.get_hide_hard_links();
+        self.images_to_check = grouped_file_entries
+            .into_par_iter()
+            .map(|(inode, fes)| {
                 if check_if_stop_received(stop_flag) {
-                    return ControlFlow::Break(());
+                    return None;
                 }
+                progress_handler.increase_items(1);
+                Some((inode, fes))
+            })
+            .while_some()
+            .flat_map(if hide_hard_links { take_1_per_inode } else { |(_, fes)| fes })
+            .map(|fe| {
+                let fe_str = fe.path.to_string_lossy().to_string();
+                let image_entry = fe.into_images_entry();
 
-                self.information.initial_found_files = self.images_to_check.len();
+                (fe_str, image_entry)
+            })
+            .collect();
 
-                debug!("check_files - Found {} image files.", self.images_to_check.len());
-                ControlFlow::Continue(())
-            }
+        progress_handler.join_thread();
 
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
+        if check_if_stop_received(stop_flag) {
+            return ControlFlow::Break(());
         }
+
+        self.information.initial_found_files = self.images_to_check.len();
+
+        debug!("check_files - Found {} image files.", self.images_to_check.len());
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "hash_images_load_cache", level = "debug")]

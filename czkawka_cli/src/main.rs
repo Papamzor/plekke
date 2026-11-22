@@ -665,7 +665,7 @@ fn save_and_write_results_to_writer<T: CommonData + PrintResults>(component: &T,
 
     let mut buf_writer = std::io::BufWriter::new(Vec::new());
     if !common_cli_items.do_not_print.do_not_print_results {
-        let _ = component.print_results_to_writer(&mut buf_writer).map_err(|e| {
+        let _ = component.write_results(&mut buf_writer).map_err(|e| {
             error!("Failed to print results to output: {e}");
         });
     }

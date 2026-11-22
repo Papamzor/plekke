@@ -19,7 +19,6 @@ use crate::common::consts::{
     PDF_FILES_EXTENSIONS, SEVENZ_FILES_EXTENSIONS, SVG_FILES_EXTENSIONS, TAR_FILES_EXTENSIONS, TOML_FILES_EXTENSIONS, VIDEO_FILES_EXTENSIONS, XML_FILES_EXTENSIONS,
     XZ_FILES_EXTENSIONS, YAML_FILES_EXTENSIONS, ZIP_FILES_EXTENSIONS, ZST_FILES_EXTENSIONS,
 };
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::ToolType;
 use crate::common::process_utils::run_command_interruptible;
 use crate::common::progress_data::{ProgressData, ToolStage};
@@ -42,31 +41,17 @@ impl BrokenFiles {
 
     #[fun_time(message = "check_files", level = "debug")]
     pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .group_by(|_fe| ())
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .common_data(&self.common_data)
-            .build()
-            .run();
-
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.files_to_check = grouped_file_entries
-                    .into_values()
-                    .flatten()
-                    .map(|fe| {
-                        let broken_entry = fe.into_broken_entry();
-                        (broken_entry.path.to_string_lossy().to_string(), broken_entry)
-                    })
-                    .collect();
-                self.common_data.text_messages.warnings.extend(warnings);
-                debug!("check_files - Found {} files to check.", self.files_to_check.len());
-                ControlFlow::Continue(())
-            }
-
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
-        }
+        self.files_to_check = self
+            .common_data
+            .collect_files(stop_flag, progress_sender, |_| {})?
+            .into_iter()
+            .map(|fe| {
+                let broken_entry = fe.into_broken_entry();
+                (broken_entry.path.to_string_lossy().to_string(), broken_entry)
+            })
+            .collect();
+        debug!("check_files - Found {} files to check.", self.files_to_check.len());
+        ControlFlow::Continue(())
     }
 
     fn check_broken_image(mut file_entry: BrokenEntry) -> BrokenEntry {

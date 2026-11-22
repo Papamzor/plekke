@@ -18,7 +18,6 @@ use rusty_chromaprint::{Configuration, match_fingerprints};
 use crate::common::audio_fingerprint::calc_fingerprint_and_duration;
 use crate::common::cache::{CACHE_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::create_crash_message;
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, ProgressData, SameMusicMode, SameMusicStage, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -43,28 +42,14 @@ impl SameMusic {
 
     #[fun_time(message = "check_files", level = "debug")]
     pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let result = DirTraversalBuilder::new()
-            .group_by(|_fe| ())
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .common_data(&self.common_data)
-            .build()
-            .run();
-
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                self.music_to_check = grouped_file_entries
-                    .into_values()
-                    .flatten()
-                    .map(|fe| (fe.path.to_string_lossy().to_string(), fe.into_music_entry()))
-                    .collect();
-                self.common_data.text_messages.warnings.extend(warnings);
-                debug!("check_files - Found {} music files.", self.music_to_check.len());
-                ControlFlow::Continue(())
-            }
-
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
-        }
+        self.music_to_check = self
+            .common_data
+            .collect_files(stop_flag, progress_sender, |_| {})?
+            .into_iter()
+            .map(|fe| (fe.path.to_string_lossy().to_string(), fe.into_music_entry()))
+            .collect();
+        debug!("check_files - Found {} music files.", self.music_to_check.len());
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "load_cache", level = "debug")]

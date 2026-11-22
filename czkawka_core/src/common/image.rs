@@ -3,6 +3,7 @@ use std::panic;
 use std::path::Path;
 
 use fast_image_resize::{FilterType as FirFilterType, ResizeAlg, ResizeOptions as FirResizeOptions, Resizer};
+use image::metadata::Orientation;
 use image::{DynamicImage, ImageReader};
 use little_exif::exif_tag::ExifTag;
 use little_exif::ifd::ExifTagGroup;
@@ -31,17 +32,13 @@ pub(crate) enum ImageType {
     Raw,
 }
 
-/// Decodes an image from raw bytes using the same pipeline as `get_dynamic_image_from_path`.
-/// No EXIF rotation is applied (no path available); call-sites that need rotation handle it separately.
-pub(crate) fn get_dynamic_image_from_bytes(bytes: &[u8], image_type: ImageType) -> Result<DynamicImage, String> {
-    match image_type {
-        ImageType::Normal => ImageReader::new(std::io::Cursor::new(bytes))
-            .with_guessed_format()
-            .map_err(|e| e.to_string())?
-            .decode()
-            .map_err(|e| e.to_string()),
-        ImageType::Raw => get_raw_image_from_bytes(bytes),
-    }
+/// Decodes a non-raw image from bytes; no EXIF rotation is applied.
+pub(crate) fn get_dynamic_image_from_bytes(bytes: &[u8]) -> Result<DynamicImage, String> {
+    ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())
 }
 
 pub struct LoadedImage {
@@ -88,7 +85,7 @@ pub fn get_dynamic_image_from_path(path: &str, opts: Option<ImgResizeOptions>) -
         let img = match image_type {
             ImageType::Normal => {
                 let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-                get_dynamic_image_from_bytes(&bytes, ImageType::Normal).map_err(|e| flc!("core_image_open_failed", path = path, reason = e))?
+                get_dynamic_image_from_bytes(&bytes).map_err(|e| flc!("core_image_open_failed", path = path, reason = e))?
             }
             ImageType::Raw => get_raw_image(path).map_err(|e| flc!("core_image_open_failed", path = path, reason = e))?,
         };
@@ -112,7 +109,7 @@ pub fn get_dynamic_image_from_path(path: &str, opts: Option<ImgResizeOptions>) -
 
     if let Ok(res) = res {
         match res {
-            Ok((img, w, h)) => {
+            Ok((mut img, w, h)) => {
                 let rotation = match image_type {
                     // rawler applies the orientation from the metadata of the raw file itself
                     ImageType::Raw => None,
@@ -123,10 +120,12 @@ pub fn get_dynamic_image_from_path(path: &str, opts: Option<ImgResizeOptions>) -
                         None
                     }),
                 };
-                let img_rotated = apply_exif_orientation(img, rotation);
+                if let Some(orientation) = rotation {
+                    img.apply_orientation(orientation);
+                }
 
                 Ok(LoadedImage {
-                    image: img_rotated,
+                    image: img,
                     original_width: w,
                     original_height: h,
                 })
@@ -171,10 +170,6 @@ fn resize_image(img: DynamicImage, opts: ImgResizeOptions) -> DynamicImage {
     }
 }
 
-pub(crate) fn get_raw_image_from_bytes(bytes: &[u8]) -> Result<DynamicImage, String> {
-    decode_raw_source(&RawSource::new_from_slice(bytes))
-}
-
 pub(crate) fn get_raw_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage, String> {
     let raw_source = RawSource::new(path.as_ref()).map_err(|err| format!("Failed to create RawSource from path {}: {err}", path.as_ref().to_string_lossy()))?;
     decode_raw_source(&raw_source)
@@ -187,22 +182,24 @@ fn decode_raw_source(raw_source: &RawSource) -> Result<DynamicImage, String> {
     timer.checkpoint("Got decoder");
 
     let params = RawDecodeParams::default();
-    let image = match decoder.full_image(raw_source, &params).ok().flatten() {
+    let mut image = match decoder.full_image(raw_source, &params).ok().flatten() {
         Some(embedded_image) => embedded_image,
         None => develop_raw_image(decoder.as_ref(), raw_source, &params)?,
     };
     timer.checkpoint("Decoded image");
 
-    let orientation = decoder
+    if let Some(orientation) = decoder
         .raw_metadata(raw_source, &params)
         .ok()
         .and_then(|metadata| metadata.exif.orientation)
-        .and_then(ExifOrientation::from_exif_value);
-    let rotated = apply_exif_orientation(image, orientation);
+        .and_then(orientation_from_exif)
+    {
+        image.apply_orientation(orientation);
+    }
 
     trace!("{}", timer.report("Everything", false));
 
-    Ok(rotated)
+    Ok(image)
 }
 
 fn develop_raw_image(decoder: &dyn Decoder, raw_source: &RawSource, params: &RawDecodeParams) -> Result<DynamicImage, String> {
@@ -221,48 +218,11 @@ pub fn check_if_can_display_image(path: &str) -> bool {
     allowed_extensions.iter().any(|ext| &extension_str == ext)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExifOrientation {
-    Normal,
-    MirrorHorizontal,
-    Rotate180,
-    MirrorVertical,
-    MirrorHorizontalAndRotate270CW,
-    Rotate90CW,
-    MirrorHorizontalAndRotate90CW,
-    Rotate270CW,
+fn orientation_from_exif(value: u16) -> Option<Orientation> {
+    u8::try_from(value).ok().and_then(Orientation::from_exif)
 }
 
-impl ExifOrientation {
-    pub(crate) fn from_exif_value(value: u16) -> Option<Self> {
-        match value {
-            1 => Some(Self::Normal),
-            2 => Some(Self::MirrorHorizontal),
-            3 => Some(Self::Rotate180),
-            4 => Some(Self::MirrorVertical),
-            5 => Some(Self::MirrorHorizontalAndRotate270CW),
-            6 => Some(Self::Rotate90CW),
-            7 => Some(Self::MirrorHorizontalAndRotate90CW),
-            8 => Some(Self::Rotate270CW),
-            _ => None,
-        }
-    }
-}
-
-pub(crate) fn apply_exif_orientation(image: DynamicImage, orientation: Option<ExifOrientation>) -> DynamicImage {
-    match orientation {
-        Some(ExifOrientation::Normal) | None => image,
-        Some(ExifOrientation::MirrorHorizontal) => image.fliph(),
-        Some(ExifOrientation::Rotate180) => image.rotate180(),
-        Some(ExifOrientation::MirrorVertical) => image.flipv(),
-        Some(ExifOrientation::MirrorHorizontalAndRotate270CW) => image.fliph().rotate270(),
-        Some(ExifOrientation::Rotate90CW) => image.rotate90(),
-        Some(ExifOrientation::MirrorHorizontalAndRotate90CW) => image.fliph().rotate90(),
-        Some(ExifOrientation::Rotate270CW) => image.rotate270(),
-    }
-}
-
-pub(crate) fn get_rotation_from_exif(path: &str) -> Result<Option<ExifOrientation>, std::io::Error> {
+pub(crate) fn get_rotation_from_exif(path: &str) -> Result<Option<Orientation>, std::io::Error> {
     if let Some(extension) = Path::new(path).extension()
         && HEIC_EXTENSIONS.contains(&extension.to_string_lossy().to_lowercase().as_str())
     {
@@ -281,7 +241,7 @@ pub(crate) fn get_rotation_from_exif(path: &str) -> Result<Option<ExifOrientatio
         if let Some(ExifTag::Orientation(values)) = metadata.get_tag_by_hex(0x0112, Some(ExifTagGroup::GENERIC)).next()
             && let Some(&value) = values.first()
         {
-            return Ok(ExifOrientation::from_exif_value(value));
+            return Ok(orientation_from_exif(value));
         }
         Ok(None)
     });
@@ -312,15 +272,15 @@ mod tests {
         let rotated_exif = get_rotation_from_exif(TEST_ROTATED_IMAGE).ok();
 
         if let Some(normal_orientation) = normal_exif {
-            assert!(normal_orientation == Some(ExifOrientation::Normal) || normal_orientation.is_none());
+            assert!(normal_orientation == Some(Orientation::NoTransforms) || normal_orientation.is_none());
         }
 
         if let Some(rotated_orientation) = rotated_exif
             && rotated_orientation.is_some()
         {
             let raw_bytes = std::fs::read(TEST_ROTATED_IMAGE).unwrap();
-            let raw_rotated = get_dynamic_image_from_bytes(&raw_bytes, ImageType::Normal).unwrap();
-            if rotated_orientation == Some(ExifOrientation::Rotate90CW) || rotated_orientation == Some(ExifOrientation::Rotate270CW) {
+            let raw_rotated = get_dynamic_image_from_bytes(&raw_bytes).unwrap();
+            if rotated_orientation == Some(Orientation::Rotate90) || rotated_orientation == Some(Orientation::Rotate270) {
                 assert_eq!(rotated_img.width(), raw_rotated.height());
                 assert_eq!(rotated_img.height(), raw_rotated.width());
             }
@@ -328,52 +288,21 @@ mod tests {
     }
 
     #[test]
-    fn test_exif_orientation_values() {
-        assert_eq!(ExifOrientation::from_exif_value(1), Some(ExifOrientation::Normal));
-        assert_eq!(ExifOrientation::from_exif_value(6), Some(ExifOrientation::Rotate90CW));
-        assert_eq!(ExifOrientation::from_exif_value(8), Some(ExifOrientation::Rotate270CW));
-        assert_eq!(ExifOrientation::from_exif_value(0), None);
-        assert_eq!(ExifOrientation::from_exif_value(9), None);
-    }
-
-    #[test]
-    fn test_apply_exif_orientation_swaps_dimensions_only_for_quarter_turns() {
-        let image = DynamicImage::new_rgb8(4, 2);
-        for (orientation, expected) in [
-            (None, (4, 2)),
-            (Some(ExifOrientation::Normal), (4, 2)),
-            (Some(ExifOrientation::MirrorHorizontal), (4, 2)),
-            (Some(ExifOrientation::Rotate180), (4, 2)),
-            (Some(ExifOrientation::MirrorVertical), (4, 2)),
-            (Some(ExifOrientation::Rotate90CW), (2, 4)),
-            (Some(ExifOrientation::Rotate270CW), (2, 4)),
-            (Some(ExifOrientation::MirrorHorizontalAndRotate90CW), (2, 4)),
-            (Some(ExifOrientation::MirrorHorizontalAndRotate270CW), (2, 4)),
-        ] {
-            let rotated = apply_exif_orientation(image.clone(), orientation);
-            assert_eq!((rotated.width(), rotated.height()), expected, "{orientation:?}");
-        }
-    }
-
-    #[test]
-    fn test_apply_exif_orientation_moves_pixels() {
-        let mut image = image::RgbImage::new(2, 1);
-        image.put_pixel(0, 0, image::Rgb([255, 0, 0]));
-        image.put_pixel(1, 0, image::Rgb([0, 0, 255]));
-        let image = DynamicImage::ImageRgb8(image);
-
-        let mirrored = apply_exif_orientation(image.clone(), Some(ExifOrientation::MirrorHorizontal)).to_rgb8();
-        assert_eq!(mirrored.get_pixel(0, 0).0, [0, 0, 255]);
-        assert_eq!(mirrored.get_pixel(1, 0).0, [255, 0, 0]);
-
-        let rotated = apply_exif_orientation(image, Some(ExifOrientation::Rotate90CW)).to_rgb8();
-        assert_eq!(rotated.get_pixel(0, 0).0, [255, 0, 0]);
-        assert_eq!(rotated.get_pixel(0, 1).0, [0, 0, 255]);
+    fn test_orientation_from_exif_values() {
+        assert_eq!(orientation_from_exif(1), Some(Orientation::NoTransforms));
+        assert_eq!(orientation_from_exif(6), Some(Orientation::Rotate90));
+        assert_eq!(orientation_from_exif(8), Some(Orientation::Rotate270));
+        assert_eq!(orientation_from_exif(0), None);
+        assert_eq!(orientation_from_exif(9), None);
+        assert_eq!(orientation_from_exif(257), None);
     }
 
     #[test]
     fn test_raw_decoding_of_invalid_data_returns_error() {
-        get_raw_image_from_bytes(b"not a raw image").unwrap_err();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid.cr2");
+        std::fs::write(&path, b"not a raw image").unwrap();
+        get_raw_image(&path).unwrap_err();
     }
 
     #[test]
@@ -394,7 +323,7 @@ mod tests {
     #[test]
     fn test_error_handling() {
         get_dynamic_image_from_path("nonexistent.jpg", None).unwrap_err();
-        get_dynamic_image_from_bytes(b"not an image", ImageType::Normal).unwrap_err();
+        get_dynamic_image_from_bytes(b"not an image").unwrap_err();
         get_rotation_from_exif("nonexistent.jpg").unwrap_err();
     }
 }

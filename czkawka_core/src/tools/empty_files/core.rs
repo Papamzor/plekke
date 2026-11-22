@@ -9,7 +9,6 @@ use fun_time::fun_time;
 use log::debug;
 use rayon::prelude::*;
 
-use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
 use crate::common::model::{CheckingMethod, FileEntry, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -63,35 +62,23 @@ impl EmptyFiles {
         let checking_method = self.effective_checking_method();
         let max_size = if checking_method == CheckingMethod::EmptyFilesContent { u64::MAX } else { 0 };
 
-        let result = DirTraversalBuilder::new()
-            .common_data(&self.common_data)
-            .group_by(|_fe| ())
-            .stop_flag(stop_flag)
-            .progress_sender(progress_sender)
-            .minimal_file_size(0)
-            .maximal_file_size(max_size)
-            .build()
-            .run();
-
-        match result {
-            DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => {
-                for fe in grouped_file_entries.into_values().flatten() {
-                    if fe.size == 0 {
-                        self.empty_files.push(fe);
-                    } else {
-                        self.files_to_check.push(fe);
-                    }
-                }
-                self.common_data.text_messages.warnings.extend(warnings);
-                debug!(
-                    "collect_files - {} zero-size, {} queued for content check",
-                    self.empty_files.len(),
-                    self.files_to_check.len()
-                );
-                ControlFlow::Continue(())
+        let files = self.common_data.collect_files(stop_flag, progress_sender, |traversal| {
+            traversal.minimal_file_size = 0;
+            traversal.maximal_file_size = max_size;
+        })?;
+        for fe in files {
+            if fe.size == 0 {
+                self.empty_files.push(fe);
+            } else {
+                self.files_to_check.push(fe);
             }
-            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
+        debug!(
+            "collect_files - {} zero-size, {} queued for content check",
+            self.empty_files.len(),
+            self.files_to_check.len()
+        );
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "check_content", level = "debug")]

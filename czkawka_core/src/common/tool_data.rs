@@ -55,21 +55,11 @@ impl CommonToolData {
     pub fn new(tool_type: ToolType) -> Self {
         Self {
             tool_type,
-            text_messages: Messages::new(),
-            directories: Directories::new(),
-            extensions: Extensions::new(),
-            excluded_items: ExcludedItems::new(),
             recursive_search: true,
-            delete_method: DeleteMethod::None,
             maximal_file_size: u64::MAX,
-            minimal_file_size: 0,
-            stopped_search: false,
             use_cache: true,
             delete_outdated_cache: true,
-            use_reference_folders: false,
-            dry_run: false,
-            move_to_trash: false,
-            hide_hard_links: false,
+            ..Default::default()
         }
     }
 }
@@ -118,17 +108,11 @@ pub trait CommonData {
     }
 
     fn set_maximal_file_size(&mut self, maximal_file_size: u64) {
-        self.get_cd_mut().maximal_file_size = match maximal_file_size {
-            0 => 1,
-            t => t,
-        };
+        self.get_cd_mut().maximal_file_size = maximal_file_size.max(1);
     }
 
     fn set_minimal_file_size(&mut self, minimal_file_size: u64) {
-        self.get_cd_mut().minimal_file_size = match minimal_file_size {
-            0 => 1,
-            t => t,
-        };
+        self.get_cd_mut().minimal_file_size = minimal_file_size.max(1);
     }
 
     #[cfg(target_family = "unix")]

@@ -23,7 +23,7 @@ czkawka_core/src/
 │   ├── model.rs                   # ToolType, CheckingMethod, FileEntry, DeleteMethod
 │   ├── progress_data.rs           # ProgressData, CurrentStage enum
 │   ├── progress_stop_handler.rs   # ProgressThreadHandler, check_if_stop_received
-│   ├── dir_traversal.rs           # DirTraversalBuilder, DirTraversalResult
+│   ├── dir_traversal.rs           # DirTraversal + CommonToolData::collect_files/collect_grouped_files
 │   ├── cache.rs                   # Generic load/save cache (bincode + JSON)
 │   ├── cache/
 │   │   └── cleaning.rs            # Outdated cache cleanup
@@ -146,9 +146,8 @@ pub trait CommonData {
 
 pub trait PrintResults: CommonData {
     fn write_results<T: Write>(&self, w: &mut T) -> io::Result<()>;
-    fn print_results_to_writer<T: Write>(&self, w: &mut T) -> io::Result<()>;
     fn save_results_to_file_as_json(&self, file: &str, pretty: bool) -> io::Result<()>;
-    // + write_base_search_paths, print_results_to_output/_to_file, save_all_in_one, …
+    // + write_base_search_paths, print_results_to_file, save_results_to_file_as_json_internal
 }
 
 pub trait ResultEntry {
@@ -193,22 +192,17 @@ pub struct CommonToolData {
 
 ## DirTraversal (`src/common/dir_traversal.rs`)
 
-Builder-pattern filesystem traversal used by all tools:
+Filesystem traversal used by all file-list tools, via two `CommonToolData` helpers that push
+traversal warnings into `text_messages` and return `ControlFlow::Break(())` when stopped:
 
 ```rust
-let result = DirTraversalBuilder::new()
-    .common_data(&self.common_data)
-    .group_by(|fe: &FileEntry| fe.size)   // Groups entries by this key
-    .stop_flag(stop_flag)
-    .progress_sender(progress_sender)
-    .checking_method(CheckingMethod::Size)
-    .build()
-    .run();
+// Flat list; the closure tweaks the walk (min/max size, collect mode, checking method, ...)
+let files = self.common_data.collect_files(stop_flag, progress_sender, |_| {})?;
 
-match result {
-    DirTraversalResult::SuccessFiles { grouped_file_entries, warnings } => { … }
-    DirTraversalResult::Stopped => return ControlFlow::Break(()),
-}
+// Grouped by a key
+let by_size = self.common_data.collect_grouped_files(stop_flag, progress_sender, |fe| fe.size, |traversal| {
+    traversal.checking_method = CheckingMethod::Size;
+})?;
 ```
 
 **Internals:**

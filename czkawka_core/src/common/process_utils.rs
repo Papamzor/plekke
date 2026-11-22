@@ -1,6 +1,7 @@
+use std::io::{self, Read};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -55,29 +56,8 @@ pub fn run_command_interruptible(mut command: Command, stop_flag: &Arc<AtomicBoo
         return Some(Err("Failed to take stderr from child process".to_string()));
     };
 
-    let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buf = Arc::new(Mutex::new(Vec::new()));
-
-    let out_buf = stdout_buf.clone();
-    let err_buf = stderr_buf.clone();
-
-    let out_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = std::io::copy(&mut stdout, &mut buf);
-        match out_buf.lock() {
-            Ok(mut lock) => *lock = buf,
-            Err(e) => error!("Failed to lock stdout buffer: {e}"),
-        }
-    });
-
-    let err_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = std::io::copy(&mut stderr, &mut buf);
-        match err_buf.lock() {
-            Ok(mut lock) => *lock = buf,
-            Err(e) => error!("Failed to lock stderr buffer: {e}"),
-        }
-    });
+    let out_handle = thread::spawn(move || read_to_end(&mut stdout));
+    let err_handle = thread::spawn(move || read_to_end(&mut stderr));
 
     // pid is unique only while the child is alive, which is exactly the watcher's lifetime here.
     let _watch = LongOperationWatcher::watch(&format!("command {command:?}"), &child.id().to_string());
@@ -101,44 +81,23 @@ pub fn run_command_interruptible(mut command: Command, stop_flag: &Arc<AtomicBoo
         Err(e) => return Some(Err(flc!("core_failed_to_wait_for_process", reason = e.to_string()))),
     };
 
-    let _ = out_handle.join();
-    let _ = err_handle.join();
+    let stdout = out_handle.join().unwrap_or_default();
+    let stderr = err_handle.join().unwrap_or_default();
 
     if stop_flag.load(Ordering::Relaxed) {
         return None;
     }
-
-    let stdout = match Arc::try_unwrap(stdout_buf) {
-        Ok(mutex) => match mutex.into_inner() {
-            Ok(buf) => buf,
-            Err(e) => {
-                error!("Failed to get stdout inner buffer: {e}");
-                return Some(Err("Failed to get stdout inner buffer".to_string()));
-            }
-        },
-        Err(_) => {
-            error!("Failed to unwrap stdout Arc - multiple references still exist");
-            return Some(Err("Failed to unwrap stdout Arc".to_string()));
-        }
-    };
-
-    let stderr = match Arc::try_unwrap(stderr_buf) {
-        Ok(mutex) => match mutex.into_inner() {
-            Ok(buf) => buf,
-            Err(e) => {
-                error!("Failed to get stderr inner buffer: {e}");
-                return Some(Err("Failed to get stderr inner buffer".to_string()));
-            }
-        },
-        Err(_) => {
-            error!("Failed to unwrap stderr Arc - multiple references still exist");
-            return Some(Err("Failed to unwrap stderr Arc".to_string()));
-        }
-    };
 
     Some(Ok(CommandOutput {
         status,
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
     }))
+}
+
+fn read_to_end(reader: &mut impl Read) -> Vec<u8> {
+    let mut buf = Vec::new();
+    // Partial output is still useful; read errors only truncate it.
+    let _ = io::copy(reader, &mut buf);
+    buf
 }
