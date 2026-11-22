@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 
 use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
@@ -40,7 +40,7 @@ impl PrintResults for BigFile {
                 writeln!(
                     writer,
                     "{} ({}) - \"{}\"",
-                    format_size(file_entry.size, BINARY),
+                    format_size(file_entry.size, DECIMAL),
                     file_entry.size,
                     file_entry.path.to_string_lossy()
                 )?;

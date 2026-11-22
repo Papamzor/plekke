@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 
 use crate::common::consts::{HEIC_EXTENSIONS, IMAGE_RS_SIMILAR_IMAGES_EXTENSIONS, RAW_IMAGE_EXTENSIONS};
 use crate::common::model::WorkContinueStatus;
@@ -65,7 +65,7 @@ impl PrintResults for SimilarImages {
                         file_entry.path.to_string_lossy(),
                         file_entry.width,
                         file_entry.height,
-                        format_size(file_entry.size, BINARY),
+                        format_size(file_entry.size, DECIMAL),
                         get_string_from_similarity(file_entry.difference, self.get_params().hash_size)
                     )?;
                 }
@@ -83,7 +83,7 @@ impl PrintResults for SimilarImages {
                     file_entry.path.to_string_lossy(),
                     file_entry.width,
                     file_entry.height,
-                    format_size(file_entry.size, BINARY),
+                    format_size(file_entry.size, DECIMAL),
                     get_string_from_similarity(file_entry.difference, self.get_params().hash_size)
                 )?;
                 for file_entry in vec_file_entry {
@@ -93,7 +93,7 @@ impl PrintResults for SimilarImages {
                         file_entry.path.to_string_lossy(),
                         file_entry.width,
                         file_entry.height,
-                        format_size(file_entry.size, BINARY),
+                        format_size(file_entry.size, DECIMAL),
                         get_string_from_similarity(file_entry.difference, self.get_params().hash_size)
                     )?;
                 }

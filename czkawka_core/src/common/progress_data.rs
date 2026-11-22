@@ -1,4 +1,4 @@
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 
 use crate::common::model::CheckingMethod;
 use crate::flc;
@@ -309,11 +309,11 @@ impl ProgressData {
     }
 
     /// Fully translated, ready-to-display label including the live item/byte counts.
-    /// One descriptive string per stage (e.g. "Analyzed partial hash of 50/100 files (1 MiB / 4 MiB)").
+    /// One descriptive string per stage (e.g. "Analyzed partial hash of 50/100 files (1 MB / 4 MB)").
     pub fn label(&self) -> String {
         let entries_checked = self.entries_checked;
         let items_stats = format!("{}/{}", self.entries_checked, self.entries_to_check);
-        let size_stats = format!("{} / {}", format_size(self.bytes_checked, BINARY), format_size(self.bytes_to_check, BINARY));
+        let size_stats = format!("{} / {}", format_size(self.bytes_checked, DECIMAL), format_size(self.bytes_to_check, DECIMAL));
         let has_size = self.bytes_to_check > 0;
 
         match self.stage {
@@ -507,7 +507,7 @@ mod tests {
         };
         let display = pd.to_display();
         assert!(display.label.contains("1/2"), "{}", display.label);
-        assert!(display.label.contains("KiB"), "byte stages show sizes: {}", display.label);
+        assert!(display.label.contains("kB"), "byte stages show sizes: {}", display.label);
         assert_eq!(display.current_progress_size, Some(25));
     }
 

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use humansize::BINARY;
+use humansize::DECIMAL;
 
 use crate::common::consts::EXIF_FILES_EXTENSIONS;
 use crate::common::model::WorkContinueStatus;
@@ -50,7 +50,7 @@ impl PrintResults for ExifRemover {
                     writer,
                     "\nFile: \"{}\" - {} - {} - {:?}",
                     exif_entry.path.to_string_lossy(),
-                    humansize::format_size(exif_entry.size, BINARY),
+                    humansize::format_size(exif_entry.size, DECIMAL),
                     exif_entry.modified_date,
                     exif_entry.exif_tags.iter().map(|item_tag| item_tag.name.clone()).collect::<Vec<_>>()
                 )?;

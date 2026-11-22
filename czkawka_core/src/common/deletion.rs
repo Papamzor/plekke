@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 use log::info;
 use rayon::prelude::*;
 
@@ -179,7 +179,7 @@ pub(crate) fn delete_elements<T: ResultEntry + Sized + Send + Sync>(
     let msg_common = format!(
         "{} items, total size: {} bytes, dry_run: {dry_run}",
         progress.entries_to_check,
-        format_size(progress.bytes_to_check, BINARY)
+        format_size(progress.bytes_to_check, DECIMAL)
     );
     if is_hardlinking {
         info!("Hardlinking {msg_common}");
@@ -303,14 +303,14 @@ pub(crate) fn delete_elements<T: ResultEntry + Sized + Send + Sync>(
             info!(
                 "{} items hardlinked, {} gained, {} failed to hardlink",
                 delete_result.hardlinked_files,
-                format_size(delete_result.gained_bytes, BINARY),
+                format_size(delete_result.gained_bytes, DECIMAL),
                 delete_result.failed_to_delete_files
             );
         } else {
             info!(
                 "{} items deleted, {} gained, {} failed to delete",
                 delete_result.deleted_files,
-                format_size(delete_result.gained_bytes, BINARY),
+                format_size(delete_result.gained_bytes, DECIMAL),
                 delete_result.failed_to_delete_files
             );
         }

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 
 use crate::common::consts::VIDEO_FILES_EXTENSIONS;
 use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
@@ -112,7 +112,7 @@ impl PrintResults for SimilarVideos {
                 writer,
                 "\"{}\" - {} - {} - {} - {} - {} - {}",
                 file_entry.path.to_string_lossy(),
-                format_size(file_entry.size, BINARY),
+                format_size(file_entry.size, DECIMAL),
                 bitrate,
                 fps,
                 codec,

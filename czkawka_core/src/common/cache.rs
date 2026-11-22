@@ -9,7 +9,7 @@ use std::{fs, mem};
 
 use bincode::Options;
 use fun_time::fun_time;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 use indexmap::IndexMap;
 use log::{debug, error};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -40,7 +40,7 @@ static CACHE_CLEANING_INTERVAL_SECONDS: std::sync::LazyLock<u64> = std::sync::La
 });
 
 fn get_cache_size(file_name: &Path) -> String {
-    fs::metadata(file_name).map_or_else(|_| "<unknown size>".to_string(), |metadata| format_size(metadata.len(), BINARY))
+    fs::metadata(file_name).map_or_else(|_| "<unknown size>".to_string(), |metadata| format_size(metadata.len(), DECIMAL))
 }
 
 #[fun_time(message = "save_cache_to_file_generalized", level = "debug")]
@@ -290,9 +290,12 @@ where
     debug!(
         "load_and_split_cache_generalized_by_size - {}({}) non cached, {}({}) already cached",
         non_cached_files_to_check.len(),
-        format_size(non_cached_files_to_check.values().map(|v| v.iter().map(|e| e.get_size()).sum::<u64>()).sum::<u64>(), BINARY),
+        format_size(
+            non_cached_files_to_check.values().map(|v| v.iter().map(|e| e.get_size()).sum::<u64>()).sum::<u64>(),
+            DECIMAL
+        ),
         records_already_cached.len(),
-        format_size(records_already_cached.values().map(|v| v.iter().map(|e| e.get_size()).sum::<u64>()).sum::<u64>(), BINARY),
+        format_size(records_already_cached.values().map(|v| v.iter().map(|e| e.get_size()).sum::<u64>()).sum::<u64>(), DECIMAL),
     );
 
     (loaded_hash_map, records_already_cached, non_cached_files_to_check)
@@ -329,9 +332,9 @@ where
     debug!(
         "load_cache - completed diff between loaded and prechecked files, {}({}) - non cached, {}({}) - already cached",
         non_cached_files_to_check.len(),
-        format_size(non_cached_files_to_check.values().map(|e| e.get_size()).sum::<u64>(), BINARY),
+        format_size(non_cached_files_to_check.values().map(|e| e.get_size()).sum::<u64>(), DECIMAL),
         records_already_cached.len(),
-        format_size(records_already_cached.values().map(|e| e.get_size()).sum::<u64>(), BINARY),
+        format_size(records_already_cached.values().map(|e| e.get_size()).sum::<u64>(), DECIMAL),
     );
     (loaded_hash_map, records_already_cached, non_cached_files_to_check)
 }

@@ -1,7 +1,7 @@
 use std::cmp::Reverse;
 use std::io::Write;
 
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 use serde::Serialize;
 
 use crate::tools::disk_usage::tree::{DiskNode, DiskTree, NodeKind};
@@ -69,7 +69,7 @@ fn write_report_node<T: Write>(writer: &mut T, node: &ReportNode, indent: usize)
         writer,
         "{:indent$}{:>10} {:>5.1}%  {}{marker}",
         "",
-        format_size(node.size, BINARY),
+        format_size(node.size, DECIMAL),
         node.percent,
         node.name,
         indent = indent * 2

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use humansize::{BINARY, format_size};
+use humansize::{DECIMAL, format_size};
 
 use crate::common::model::{CheckingMethod, WorkContinueStatus};
 use crate::common::progress_data::ProgressData;
@@ -180,7 +180,7 @@ impl PrintResults for DuplicateFinder {
                         self.information.number_of_duplicated_files_by_size_name, self.information.number_of_groups_by_size_name,
                     )?;
                     for ((size, name), vector) in self.files_with_identical_size_names.iter().rev() {
-                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, BINARY), vector.len())?;
+                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, DECIMAL), vector.len())?;
                         for j in vector {
                             writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
                         }
@@ -197,7 +197,7 @@ impl PrintResults for DuplicateFinder {
                         self.information.number_of_duplicated_files_by_size_name, self.information.number_of_groups_by_size_name,
                     )?;
                     for ((size, name), (file_entry, vector)) in self.files_with_identical_size_names_referenced.iter().rev() {
-                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, BINARY), vector.len())?;
+                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, DECIMAL), vector.len())?;
                         writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
                         for j in vector {
                             writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
@@ -219,10 +219,10 @@ impl PrintResults for DuplicateFinder {
                         "Found {} duplicated files which in {} groups which takes {}.",
                         self.information.number_of_duplicated_files_by_size,
                         self.information.number_of_groups_by_size,
-                        format_size(self.information.lost_space_by_size, BINARY)
+                        format_size(self.information.lost_space_by_size, DECIMAL)
                     )?;
                     for (size, vector) in self.files_with_identical_size.iter().rev() {
-                        write!(writer, "\n---- Size {} ({}) - {} files \n", format_size(*size, BINARY), size, vector.len())?;
+                        write!(writer, "\n---- Size {} ({}) - {} files \n", format_size(*size, DECIMAL), size, vector.len())?;
                         for file_entry in vector {
                             writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
                         }
@@ -237,10 +237,10 @@ impl PrintResults for DuplicateFinder {
                         "Found {} duplicated files which in {} groups which takes {}.",
                         self.information.number_of_duplicated_files_by_size,
                         self.information.number_of_groups_by_size,
-                        format_size(self.information.lost_space_by_size, BINARY)
+                        format_size(self.information.lost_space_by_size, DECIMAL)
                     )?;
                     for (size, (file_entry, vector)) in self.files_with_identical_size_referenced.iter().rev() {
-                        writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, BINARY), size, vector.len())?;
+                        writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
                         writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
                         for file_entry in vector {
                             writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
@@ -261,11 +261,11 @@ impl PrintResults for DuplicateFinder {
                         "Found {} duplicated files which in {} groups which takes {}.",
                         self.information.number_of_duplicated_files_by_hash,
                         self.information.number_of_groups_by_hash,
-                        format_size(self.information.lost_space_by_hash, BINARY)
+                        format_size(self.information.lost_space_by_hash, DECIMAL)
                     )?;
                     for (size, vectors_vector) in self.files_with_identical_hashes.iter().rev() {
                         for vector in vectors_vector {
-                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, BINARY), size, vector.len())?;
+                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
                             for file_entry in vector {
                                 writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
                             }
@@ -281,11 +281,11 @@ impl PrintResults for DuplicateFinder {
                         "Found {} duplicated files which in {} groups which takes {}.",
                         self.information.number_of_duplicated_files_by_hash,
                         self.information.number_of_groups_by_hash,
-                        format_size(self.information.lost_space_by_hash, BINARY)
+                        format_size(self.information.lost_space_by_hash, DECIMAL)
                     )?;
                     for (size, vectors_vector) in self.files_with_identical_hashes_referenced.iter().rev() {
                         for (file_entry, vector) in vectors_vector {
-                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, BINARY), size, vector.len())?;
+                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
                             writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
                             for file_entry in vector {
                                 writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
