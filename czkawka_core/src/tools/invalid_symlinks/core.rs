@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -7,7 +8,7 @@ use fun_time::fun_time;
 use log::debug;
 
 use crate::common::dir_traversal::{Collect, DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::CommonToolData;
 use crate::tools::invalid_symlinks::{ErrorType, Info, InvalidSymlinks, MAX_NUMBER_OF_SYMLINK_JUMPS, SymlinkInfo};
@@ -22,7 +23,7 @@ impl InvalidSymlinks {
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .common_data(&self.common_data)
             .group_by(|_fe| ())
@@ -45,9 +46,9 @@ impl InvalidSymlinks {
                 self.information.number_of_invalid_symlinks = self.invalid_symlinks.len();
                 self.common_data.text_messages.warnings.extend(warnings);
                 debug!("Found {} invalid symlinks.", self.information.number_of_invalid_symlinks);
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 

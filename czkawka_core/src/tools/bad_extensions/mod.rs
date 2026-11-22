@@ -4,14 +4,14 @@ mod tests;
 pub mod traits;
 mod workarounds;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Serialize;
 
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 #[derive(Clone, Serialize, Debug)]
 pub struct BadFileEntry {
@@ -23,26 +23,13 @@ pub struct BadFileEntry {
     pub proper_extension: String,
 }
 
-impl ResultEntry for BadFileEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(BadFileEntry);
 
 #[derive(Default, Clone, Copy)]
 pub struct Info {
     pub number_of_files_with_bad_extension: usize,
     pub scanning_time: Duration,
 }
-
-#[derive(Clone, Debug, Default, Copy)]
-pub struct BadExtensionsFixParams {}
 
 #[derive(Clone)]
 pub struct BadExtensionsParameters {

@@ -430,11 +430,10 @@ for entry in tool.get_bad_extensions_files() {
 }
 ```
 
-Use `FixingItems` to automatically rename files:
+Call `fix_bad_extensions` to automatically rename files:
 
 ```rust
-use czkawka_core::common::traits::FixingItems;
-tool.fix_items(&stop_flag, progress_sender, ());
+tool.fix_bad_extensions(&stop_flag);
 ```
 
 ---
@@ -476,10 +475,10 @@ for entry in tool.get_bad_names() {
 }
 ```
 
-Use `FixingItems` to rename automatically:
+Call `fix_bad_names` to rename automatically:
 
 ```rust
-tool.fix_items(&stop_flag, progress_sender, ());
+tool.fix_bad_names(&stop_flag);
 ```
 
 ---
@@ -510,13 +509,12 @@ for entry in tool.get_exif_files() {
 }
 ```
 
-Use `FixingItems` to strip tags:
+Call `fix_files` to strip tags:
 
 ```rust
-use czkawka_core::common::traits::FixingItems;
-// FixParams: (override_original: bool)
-tool.fix_items(&stop_flag, progress_sender, false); // false = write _cleaned copy
-tool.fix_items(&stop_flag, progress_sender, true);  // true  = overwrite original
+use czkawka_core::tools::exif_remover::ExifTagsFixerParams;
+tool.fix_files(&stop_flag, ExifTagsFixerParams { override_file: false }); // false = write _cleaned copy
+tool.fix_files(&stop_flag, ExifTagsFixerParams { override_file: true });  // true  = overwrite original
 ```
 
 ---
@@ -525,9 +523,9 @@ tool.fix_items(&stop_flag, progress_sender, true);  // true  = overwrite origina
 
 Identifies videos that are candidates for optimization. Two modes:
 
-**Transcode mode** - finds videos not already using efficient codecs. The user supplies a list of "excluded" codecs (e.g. `["h265", "av1"]`); any video using a codec not in that list is flagged as a candidate for transcoding. With `-F`/`fix_items`, the tool actually re-encodes the files using ffmpeg.
+**Transcode mode** - finds videos not already using efficient codecs. The user supplies a list of "excluded" codecs (e.g. `["h265", "av1"]`); any video using a codec not in that list is flagged as a candidate for transcoding. With `-F`/`fix_files`, the tool actually re-encodes the files using ffmpeg.
 
-**Crop mode** - analyzes video frames to detect black bars (letterbox/pillarbox) or static edge content. Reports the optimal crop rectangle for each video. With `-F`/`fix_items`, the tool applies the crop with ffmpeg.
+**Crop mode** - analyzes video frames to detect black bars (letterbox/pillarbox) or static edge content. Reports the optimal crop rectangle for each video. With `-F`/`fix_files`, the tool applies the crop with ffmpeg.
 
 Optional features: noise reduction (`hqdn3d`), hardware-accelerated encoding, custom ffmpeg command override, thumbnail generation.
 
@@ -712,17 +710,14 @@ let messages = tool.get_text_messages();
 After a successful search, call `delete_files()` to apply the configured `DeleteMethod`:
 
 ```rust
-use czkawka_core::common::traits::DeletingItems;
-
 tool.set_delete_method(DeleteMethod::AllExceptNewest);
 tool.delete_files(&stop_flag, Some(&progress_tx));
 ```
 
-For tools that support fixing (renaming, EXIF removal, transcoding), use the `FixingItems` trait:
+Tools that support fixing have their own method: `fix_bad_extensions`, `fix_bad_names`, and `fix_files` (EXIF removal, video transcoding/cropping):
 
 ```rust
-use czkawka_core::common::traits::FixingItems;
-tool.fix_items(&stop_flag, Some(&progress_tx), fix_params);
+tool.fix_files(&stop_flag, fix_params);
 ```
 
 ---

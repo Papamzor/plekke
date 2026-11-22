@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 use crate::tools::duplicate::MyHasher;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
@@ -54,17 +54,7 @@ pub struct FileEntry {
     pub modified_date: u64,
 }
 
-impl ResultEntry for FileEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(FileEntry);
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy, Default)]
 pub enum HashType {
@@ -84,15 +74,12 @@ impl HashType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum WorkContinueStatus {
-    Continue,
-    Stop,
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+    use crate::common::traits::ResultEntry;
 
     #[test]
     fn test_file_entry_basic_operations() {

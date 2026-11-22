@@ -1,10 +1,11 @@
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 
-use crate::common::model::{CheckingMethod, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -24,7 +25,7 @@ impl DiskUsage {
     }
 
     #[fun_time(message = "scan_disk_usage", level = "debug")]
-    pub(crate) fn scan_disk_usage(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn scan_disk_usage(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let directories = &self.common_data.directories;
         let roots = directories.included_directories.iter().chain(&directories.included_files).cloned().collect::<Vec<_>>();
 
@@ -45,9 +46,9 @@ impl DiskUsage {
         self.tree = tree;
 
         if check_if_stop_received(stop_flag) {
-            WorkContinueStatus::Stop
+            ControlFlow::Break(())
         } else {
-            WorkContinueStatus::Continue
+            ControlFlow::Continue(())
         }
     }
 }

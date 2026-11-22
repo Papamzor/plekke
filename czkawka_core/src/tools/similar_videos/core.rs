@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -17,7 +18,7 @@ use crate::common::audio_fingerprint::calc_fingerprint_and_duration;
 use crate::common::cache::{CACHE_VERSION, CACHE_VIDEO_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::config_cache_path::get_config_cache_path;
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult, inode, take_1_per_inode};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::{CacheLoadPhase, ProgressData, SimilarVideosMode, SimilarVideosStage, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::{CommonData, CommonToolData};
@@ -65,7 +66,7 @@ impl SimilarVideos {
     }
 
     #[fun_time(message = "check_for_similar_videos", level = "debug")]
-    pub(crate) fn check_for_similar_videos(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_for_similar_videos(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .group_by(inode)
             .stop_flag(stop_flag)
@@ -116,14 +117,14 @@ impl SimilarVideos {
                 progress_handler.join_thread();
 
                 if check_if_stop_received(stop_flag) {
-                    return WorkContinueStatus::Stop;
+                    return ControlFlow::Break(());
                 }
 
                 debug!("check_files - Found {} video files.", self.videos_to_check.len() + self.audio_to_check.len());
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -164,9 +165,9 @@ impl SimilarVideos {
     }
 
     #[fun_time(message = "sort_videos", level = "debug")]
-    pub(crate) fn sort_videos(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn sort_videos(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.videos_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_cache_at_start();
@@ -228,14 +229,14 @@ impl SimilarVideos {
         self.match_groups_of_videos(&signatures, &hashmap_with_file_entries);
 
         // Comparing is fast, so groups are built from already hashed files even after stop; only thumbnails are skipped
-        let stopped = check_if_stop_received(stop_flag) || self.create_thumbnails(progress_sender, stop_flag) == WorkContinueStatus::Stop;
+        let stopped = check_if_stop_received(stop_flag) || self.create_thumbnails(progress_sender, stop_flag).is_break();
 
         self.remove_from_reference_folders();
         self.count_groups();
 
         self.videos_to_check = Default::default();
 
-        if stopped { WorkContinueStatus::Stop } else { WorkContinueStatus::Continue }
+        if stopped { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
     }
 
     fn count_groups(&mut self) {
@@ -253,7 +254,7 @@ impl SimilarVideos {
     }
 
     #[fun_time(message = "create_thumbnails", level = "debug")]
-    pub(crate) fn create_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>) -> WorkContinueStatus {
+    pub(crate) fn create_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>) -> ControlFlow<()> {
         let mode = if self.params.check_audio_content {
             SimilarVideosMode::AudioContent
         } else {
@@ -267,13 +268,13 @@ impl SimilarVideos {
         let progress_handler = prepare_thread_handler_common(progress_sender, stage, self.similar_vectors.iter().map(|e| e.len()).sum::<usize>(), 0);
 
         let Some(config_cache_path) = get_config_cache_path() else {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         };
 
         let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
         if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
             debug!("Failed to create thumbnails directory: {e}");
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
         let thumbnail_video_percentage_from_start = self.params.thumbnail_video_percentage_from_start;
         let generate_grid_instead_of_single = self.params.generate_thumbnail_grid_instead_of_single;
@@ -320,10 +321,10 @@ impl SimilarVideos {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "save_cache", level = "debug")]
@@ -389,9 +390,9 @@ impl SimilarVideos {
         }
     }
     #[fun_time(message = "calculate_audio_fingerprints", level = "debug")]
-    pub(crate) fn calculate_audio_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn calculate_audio_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.audio_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let mode = if self.params.check_audio_content {
@@ -411,7 +412,7 @@ impl SimilarVideos {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         let progress_handler = prepare_thread_handler_common(
@@ -465,15 +466,15 @@ impl SimilarVideos {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "compare_audio_fingerprints", level = "debug")]
-    pub(crate) fn compare_audio_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn compare_audio_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.audio_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let audio_min_duration_seconds = self.params.audio_min_duration_seconds;
@@ -512,7 +513,7 @@ impl SimilarVideos {
         for (f_entry, f_string) in entries.iter().zip(path_strings.iter()) {
             if check_if_stop_received(stop_flag) {
                 progress_handler.join_thread();
-                return WorkContinueStatus::Stop;
+                return ControlFlow::Break(());
             }
 
             progress_handler.increase_items(1);
@@ -581,7 +582,7 @@ impl SimilarVideos {
         self.remove_from_reference_folders();
         self.count_groups();
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 }
 

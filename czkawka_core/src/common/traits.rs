@@ -8,7 +8,6 @@ use crossbeam_channel::Sender;
 use fun_time::fun_time;
 use serde::Serialize;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::CommonData;
 
@@ -92,25 +91,32 @@ pub trait PrintResults: CommonData {
     }
 }
 
-pub trait DeletingItems {
-    #[must_use]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus;
-}
-
-pub trait FixingItems {
-    type FixParams;
-
-    fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams);
-}
-
 pub trait ResultEntry {
     fn get_path(&self) -> &Path;
     fn get_modified_date(&self) -> u64;
     fn get_size(&self) -> u64;
 }
 
+/// Implements [`ResultEntry`] for entries with `path`, `modified_date` and `size` fields.
+macro_rules! impl_result_entry {
+    ($($entry:ty),+ $(,)?) => {
+        $(
+            impl $crate::common::traits::ResultEntry for $entry {
+                fn get_path(&self) -> &std::path::Path {
+                    &self.path
+                }
+                fn get_modified_date(&self) -> u64 {
+                    self.modified_date
+                }
+                fn get_size(&self) -> u64 {
+                    self.size
+                }
+            }
+        )+
+    };
+}
+pub(crate) use impl_result_entry;
+
 pub trait Search {
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>);
 }
-
-pub trait AllTraits: PrintResults + DeletingItems + CommonData + Search {}

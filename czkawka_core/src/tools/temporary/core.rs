@@ -1,4 +1,5 @@
 use std::fs::DirEntry;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -10,7 +11,7 @@ use rayon::prelude::*;
 use crate::common::dir_traversal::{common_read_dir, get_modified_time};
 use crate::common::directories::Directories;
 use crate::common::items::ExcludedItems;
-use crate::common::model::{CheckingMethod, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -27,10 +28,10 @@ impl Temporary {
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.params.extensions.is_empty() {
             self.common_data.text_messages.critical = Some("No temporary file extensions defined. Add at least one extension to search for.".to_string());
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         let mut folders_to_check: Vec<PathBuf> = self.common_data.directories.included_directories.clone();
@@ -40,7 +41,7 @@ impl Temporary {
         while !folders_to_check.is_empty() {
             if check_if_stop_received(stop_flag) {
                 progress_handler.join_thread();
-                return WorkContinueStatus::Stop;
+                return ControlFlow::Break(());
             }
 
             let segments: Vec<_> = folders_to_check
@@ -98,7 +99,7 @@ impl Temporary {
         progress_handler.join_thread();
         self.information.number_of_temporary_files = self.temporary_files.len();
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     pub(crate) fn get_file_entry(&self, items_counter: &Arc<AtomicUsize>, entry_data: &DirEntry, warnings: &mut Vec<String>) -> Option<TemporaryFileEntry> {

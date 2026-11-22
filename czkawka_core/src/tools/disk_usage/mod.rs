@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::common::tool_data::CommonToolData;
 use crate::tools::disk_usage::tree::DiskTree;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Info {
     pub number_of_files: usize,
     pub number_of_directories: usize,

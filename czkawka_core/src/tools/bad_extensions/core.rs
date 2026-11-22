@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::mem;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -11,7 +12,7 @@ use mime_guess::get_mime_extensions;
 use rayon::prelude::*;
 
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{FileEntry, ToolType, WorkContinueStatus};
+use crate::common::model::{FileEntry, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -33,7 +34,7 @@ impl BadExtensions {
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .common_data(&self.common_data)
             .group_by(|_fe| ())
@@ -47,17 +48,17 @@ impl BadExtensions {
                 self.files_to_check = grouped_file_entries.into_values().flatten().collect();
                 self.common_data.text_messages.warnings.extend(warnings);
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
     #[fun_time(message = "look_for_bad_extensions_files", level = "debug")]
-    pub(crate) fn look_for_bad_extensions_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn look_for_bad_extensions_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.files_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::BadExtensionsChecking, self.files_to_check.len(), 0);
@@ -75,14 +76,14 @@ impl BadExtensions {
 
         // Break if stop was clicked
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         self.information.number_of_files_with_bad_extension = self.bad_extensions_files.len();
 
         debug!("Found {} files with invalid extension.", self.information.number_of_files_with_bad_extension);
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     fn verify_extension_of_file(&self, file_entry: FileEntry, workarounds: &IndexMap<&str, Vec<&str>>) -> Option<BadFileEntry> {
@@ -199,7 +200,7 @@ impl BadExtensions {
     }
 
     #[fun_time(message = "fix_bad_extensions", level = "debug")]
-    pub fn fix_bad_extensions(&mut self, _fix_params: super::BadExtensionsFixParams, stop_flag: &Arc<AtomicBool>) {
+    pub fn fix_bad_extensions(&mut self, stop_flag: &Arc<AtomicBool>) {
         let warnings: Vec<_> = mem::take(&mut self.bad_extensions_files)
             .into_par_iter()
             .map(|entry| {

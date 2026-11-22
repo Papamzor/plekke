@@ -1,4 +1,5 @@
 use std::fs::DirEntry;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -12,11 +13,11 @@ use rayon::prelude::*;
 use crate::common::dir_traversal::{common_get_entry_data, common_get_metadata_dir, common_read_dir, get_modified_time};
 use crate::common::directories::Directories;
 use crate::common::items::ExcludedItems;
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
-use crate::tools::empty_folder::{EmptyFolder, FolderEmptiness, FolderEntry, Info};
+use crate::tools::empty_folder::{EmptyFolder, FolderEmptiness, FolderEntry};
 
 impl EmptyFolder {
     pub fn new() -> Self {
@@ -29,10 +30,6 @@ impl EmptyFolder {
 
     pub const fn get_empty_folder_list(&self) -> &IndexMap<String, FolderEntry> {
         &self.empty_folder_list
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 
     pub(crate) fn optimize_folders(&mut self) {
@@ -55,7 +52,7 @@ impl EmptyFolder {
     }
 
     #[fun_time(message = "check_for_empty_folders", level = "debug")]
-    pub(crate) fn check_for_empty_folders(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_for_empty_folders(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let mut folders_to_check: Vec<PathBuf> = self.common_data.directories.included_directories.clone();
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::CollectingFolders, 0, 0);
@@ -79,7 +76,7 @@ impl EmptyFolder {
         while !folders_to_check.is_empty() {
             if check_if_stop_received(stop_flag) {
                 progress_handler.join_thread();
-                return WorkContinueStatus::Stop;
+                return ControlFlow::Break(());
             }
 
             let segments: Vec<_> = folders_to_check
@@ -167,7 +164,7 @@ impl EmptyFolder {
 
         debug!("Found {} empty folders.", self.empty_folder_list.len());
         progress_handler.join_thread();
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     pub(crate) fn set_as_not_empty_folder(folder_entries: &mut IndexMap<String, FolderEntry>, current_folder: &str) {

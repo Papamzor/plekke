@@ -13,9 +13,9 @@ use czkawka_core::common::logger::{filtering_messages, print_version_mode, setup
 use czkawka_core::common::progress_data::ProgressData;
 use czkawka_core::common::set_number_of_threads;
 use czkawka_core::common::tool_data::{CommonData, DeleteMethod};
-use czkawka_core::common::traits::{AllTraits, FixingItems, PrintResults, Search};
-use czkawka_core::tools::bad_extensions::{BadExtensions, BadExtensionsFixParams, BadExtensionsParameters};
-use czkawka_core::tools::bad_names::{BadNames, BadNamesParameters, NameFixerParams, NameIssues};
+use czkawka_core::common::traits::{PrintResults, Search};
+use czkawka_core::tools::bad_extensions::{BadExtensions, BadExtensionsParameters};
+use czkawka_core::tools::bad_names::{BadNames, BadNamesParameters, NameIssues};
 use czkawka_core::tools::big_file::{BigFile, BigFileParameters, SearchMode};
 use czkawka_core::tools::broken_files::{BrokenFiles, BrokenFilesParameters, CheckedTypes};
 use czkawka_core::tools::disk_usage::{DiskUsage, DiskUsageParameters};
@@ -455,8 +455,7 @@ fn bad_extensions(bad_extensions: BadExtensionsArgs, stop_flag: &Arc<AtomicBool>
     tool.search(stop_flag, Some(progress_sender));
 
     if fix_extensions {
-        let fix_params = BadExtensionsFixParams {};
-        tool.fix_items(stop_flag, Some(progress_sender), fix_params);
+        tool.fix_bad_extensions(stop_flag);
     }
 
     save_and_write_results_to_writer(&tool, &common_cli_items)
@@ -500,8 +499,7 @@ fn bad_names(bad_names: BadNamesArgs, stop_flag: &Arc<AtomicBool>, progress_send
     tool.search(stop_flag, Some(progress_sender));
 
     if fix_names {
-        let fix_params = NameFixerParams::default();
-        tool.fix_items(stop_flag, Some(progress_sender), fix_params);
+        tool.fix_bad_names(stop_flag);
     }
 
     save_and_write_results_to_writer(&tool, &common_cli_items)
@@ -563,7 +561,7 @@ fn video_optimizer(video_optimizer: VideoOptimizerArgs, stop_flag: &Arc<AtomicBo
                     custom_ffmpeg_command,
                     hardware_encoder: HardwareEncoder::None, // TODO  - missing hardware encoder
                 });
-                tool.fix_items(stop_flag, Some(progress_sender), fix_params);
+                tool.fix_files(stop_flag, fix_params);
             }
 
             save_and_write_results_to_writer(&tool, &common_cli_items)
@@ -615,7 +613,7 @@ fn video_optimizer(video_optimizer: VideoOptimizerArgs, stop_flag: &Arc<AtomicBo
                     quality,
                     crop_mechanism: crop_mech,
                 });
-                tool.fix_items(stop_flag, Some(progress_sender), fix_params);
+                tool.fix_files(stop_flag, fix_params);
             }
 
             save_and_write_results_to_writer(&tool, &common_cli_items)
@@ -642,7 +640,7 @@ fn exif_remover(exif_remover: ExifRemoverArgs, stop_flag: &Arc<AtomicBool>, prog
 
     if fix_exif {
         let fix_params = ExifTagsFixerParams { override_file };
-        tool.fix_items(stop_flag, Some(progress_sender), fix_params);
+        tool.fix_files(stop_flag, fix_params);
     }
 
     save_and_write_results_to_writer(&tool, &common_cli_items)
@@ -695,7 +693,7 @@ fn save_and_write_results_to_writer<T: CommonData + PrintResults>(component: &T,
 
 fn set_simple_delete<T>(component: &mut T, s_delete: SDMethod)
 where
-    T: AllTraits,
+    T: CommonData,
 {
     if s_delete.delete_files {
         component.set_delete_method(DeleteMethod::Delete);
@@ -706,7 +704,7 @@ where
 
 fn set_advanced_delete<T>(component: &mut T, a_delete: DMethod)
 where
-    T: AllTraits,
+    T: CommonData,
 {
     component.set_delete_method(a_delete.delete_method);
     component.set_dry_run(a_delete.dry_run);
@@ -715,7 +713,7 @@ where
 
 fn set_common_settings<T>(component: &mut T, common_cli_items: &CommonCliItems, reference_directories: Option<&Vec<PathBuf>>)
 where
-    T: AllTraits,
+    T: CommonData,
 {
     set_number_of_threads(common_cli_items.thread_number);
 

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -11,7 +12,7 @@ use rayon::prelude::*;
 
 use crate::common::cache::{CACHE_DUPLICATE_PREHASH_VERSION, CACHE_DUPLICATE_VERSION, load_and_split_cache_generalized_by_size, save_cache_to_file_generalized};
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{CheckingMethod, FileEntry, HashType, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, FileEntry, HashType, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, DuplicateStage, ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::{CommonData, CommonToolData};
@@ -38,7 +39,7 @@ impl DuplicateFinder {
     }
 
     #[fun_time(message = "check_files_name", level = "debug")]
-    pub(crate) fn check_files_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let group_by_func = if self.get_params().case_sensitive_name_comparison {
             |fe: &FileEntry| {
                 fe.path
@@ -94,9 +95,9 @@ impl DuplicateFinder {
                 }
                 self.calculate_name_stats();
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -115,7 +116,7 @@ impl DuplicateFinder {
     }
 
     #[fun_time(message = "check_files_size_name", level = "debug")]
-    pub(crate) fn check_files_size_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files_size_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let group_by_func = if self.get_params().case_sensitive_name_comparison {
             |fe: &FileEntry| {
                 (
@@ -177,10 +178,10 @@ impl DuplicateFinder {
                 }
                 self.calculate_size_name_stats();
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -201,7 +202,7 @@ impl DuplicateFinder {
     }
 
     #[fun_time(message = "check_files_size", level = "debug")]
-    pub(crate) fn check_files_size(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files_size(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .common_data(&self.common_data)
             .group_by(|fe| fe.size)
@@ -255,7 +256,7 @@ impl DuplicateFinder {
                 progress_handler.join_thread();
 
                 if check_if_stop_received(stop_flag) {
-                    return WorkContinueStatus::Stop;
+                    return ControlFlow::Break(());
                 }
 
                 let filtered_size = self.files_with_identical_size.values().map(|v| v.len() as u64).sum::<u64>();
@@ -278,10 +279,10 @@ impl DuplicateFinder {
                     self.files_with_identical_size_referenced.values().map(|(_fe, vec)| vec.len()).sum::<usize>()
                 );
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -363,9 +364,9 @@ impl DuplicateFinder {
         stop_flag: &Arc<AtomicBool>,
         progress_sender: Option<&Sender<ProgressData>>,
         pre_checked_map: &mut BTreeMap<u64, Vec<DuplicateEntry>>,
-    ) -> WorkContinueStatus {
+    ) -> ControlFlow<()> {
         if self.files_with_identical_size.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let check_type = self.get_params().hash_type;
@@ -375,7 +376,7 @@ impl DuplicateFinder {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
@@ -465,10 +466,10 @@ impl DuplicateFinder {
         progress_handler.join_thread();
 
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "full_hashing_load_cache_at_start", level = "debug")]
@@ -541,9 +542,9 @@ impl DuplicateFinder {
         stop_flag: &Arc<AtomicBool>,
         progress_sender: Option<&Sender<ProgressData>>,
         pre_checked_map: BTreeMap<u64, Vec<DuplicateEntry>>,
-    ) -> WorkContinueStatus {
+    ) -> ControlFlow<()> {
         if pre_checked_map.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::Duplicate(DuplicateStage::LoadingHashCache(CacheLoadPhase::Loading)), 0, 0);
@@ -552,7 +553,7 @@ impl DuplicateFinder {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         let progress_handler = prepare_thread_handler_common(
@@ -619,7 +620,7 @@ impl DuplicateFinder {
             }
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "hash_reference_folders", level = "debug")]
@@ -675,17 +676,13 @@ impl DuplicateFinder {
     }
 
     #[fun_time(message = "check_files_hash", level = "debug")]
-    pub(crate) fn check_files_hash(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files_hash(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         assert_eq!(self.get_params().check_method, CheckingMethod::Hash);
 
         let mut pre_checked_map: BTreeMap<u64, Vec<DuplicateEntry>> = Default::default();
-        if self.prehashing(stop_flag, progress_sender, &mut pre_checked_map) == WorkContinueStatus::Stop {
-            return WorkContinueStatus::Stop;
-        }
+        self.prehashing(stop_flag, progress_sender, &mut pre_checked_map)?;
 
-        if self.full_hashing(stop_flag, progress_sender, pre_checked_map) == WorkContinueStatus::Stop {
-            return WorkContinueStatus::Stop;
-        }
+        self.full_hashing(stop_flag, progress_sender, pre_checked_map)?;
 
         self.hash_reference_folders();
 
@@ -693,7 +690,7 @@ impl DuplicateFinder {
         let files_with_identical_size = mem::take(&mut self.files_with_identical_size);
         thread::spawn(move || drop(files_with_identical_size));
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 }
 

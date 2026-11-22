@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -6,42 +7,32 @@ use std::time::Instant;
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, DeleteItemType, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::flc;
-use crate::tools::bad_names::{BadNames, BadNamesParameters, Info, NameFixerParams};
-
-impl AllTraits for BadNames {}
+use crate::tools::bad_names::{BadNames, BadNamesParameters, Info};
 
 impl Search for BadNames {
     #[fun_time(message = "find_bad_names", level = "info")]
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if self.params.checked_issues.is_empty() {
                 self.common_data.text_messages.critical = Some(flc!("core_needs_to_set_at_least_one_bad_name_option"));
-                return;
+                return ControlFlow::Continue(());
             }
 
             if self.prepare_items(None).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
 
-            if self.check_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.look_for_bad_names_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.delete_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.check_files(stop_flag, progress_sender)?;
+            self.look_for_bad_names_files(stop_flag, progress_sender)?;
+            self.delete_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
@@ -68,41 +59,15 @@ impl PrintResults for BadNames {
     }
 }
 
-impl DeletingItems for BadNames {
+impl BadNames {
     #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        match self.common_data.delete_method {
-            DeleteMethod::Delete => self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, DeleteItemType::DeletingFiles(self.bad_names_files.clone())),
-            DeleteMethod::None => WorkContinueStatus::Continue,
-            _ => unreachable!(),
-        }
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        self.delete_if_requested(stop_flag, progress_sender, |tool| DeleteItemType::DeletingFiles(tool.bad_names_files.clone()))
     }
 }
 
-impl FixingItems for BadNames {
-    type FixParams = NameFixerParams;
-    #[fun_time(message = "fix_items", level = "debug")]
-    fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
-        self.fix_bad_names(fix_params, stop_flag);
-    }
-}
-
-impl CommonData for BadNames {
-    type Info = Info;
-    type Parameters = BadNamesParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    BadNames, Info, BadNamesParameters,
     fn found_any_items(&self) -> bool {
         self.information.number_of_files_with_bad_names > 0
     }

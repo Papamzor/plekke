@@ -106,7 +106,7 @@ fn tool_name(args: ToolArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Send
 ```
 
 `set_common_settings` applies paths, recursion, extensions, cache flags, and
-thread count via the `AllTraits` bound.
+thread count via the `CommonData` bound.
 
 ---
 

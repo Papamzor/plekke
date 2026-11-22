@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -8,43 +9,30 @@ use fun_time::fun_time;
 use humansize::{DECIMAL, format_size};
 
 use crate::common::consts::{HEIC_EXTENSIONS, IMAGE_RS_SIMILAR_IMAGES_EXTENSIONS, RAW_IMAGE_EXTENSIONS};
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, DeleteItemType, DeleteMethod, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::tools::similar_images::core::get_string_from_similarity;
 use crate::tools::similar_images::{Info, SimilarImages, SimilarImagesParameters};
-
-impl AllTraits for SimilarImages {}
 
 impl Search for SimilarImages {
     #[fun_time(message = "find_similar_images", level = "info")]
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             let extensions = [IMAGE_RS_SIMILAR_IMAGES_EXTENSIONS, RAW_IMAGE_EXTENSIONS, HEIC_EXTENSIONS].concat();
 
             if self.prepare_items(Some(&extensions)).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
             self.common_data.use_reference_folders = !self.common_data.directories.reference_directories.is_empty() || !self.common_data.directories.reference_files.is_empty();
-            if self.check_for_similar_images(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.hash_images(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.find_similar_hashes(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.delete_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.check_for_similar_images(stop_flag, progress_sender)?;
+            self.hash_images(stop_flag, progress_sender)?;
+            self.find_similar_hashes(stop_flag, progress_sender)?;
+            self.delete_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
@@ -107,39 +95,25 @@ impl PrintResults for SimilarImages {
     }
 
     fn save_results_to_file_as_json(&self, file_name: &str, pretty_print: bool) -> std::io::Result<()> {
-        if self.get_use_reference() {
+        if self.get_use_reference_folders() {
             self.save_results_to_file_as_json_internal(file_name, &self.similar_referenced_vectors, pretty_print)
         } else {
             self.save_results_to_file_as_json_internal(file_name, &self.similar_vectors, pretty_print)
         }
     }
 }
-impl CommonData for SimilarImages {
-    type Info = Info;
-    type Parameters = SimilarImagesParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    SimilarImages, Info, SimilarImagesParameters,
     fn found_any_items(&self) -> bool {
         self.information.number_of_duplicates > 0
     }
 }
 
-impl DeletingItems for SimilarImages {
+impl SimilarImages {
     #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.get_cd().delete_method == DeleteMethod::None {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
         if self.get_use_reference_folders() {
             let files_to_delete: Vec<_> = self.similar_referenced_vectors.iter().flat_map(|(_, files)| files.iter().cloned()).collect();

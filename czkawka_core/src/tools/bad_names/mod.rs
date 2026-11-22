@@ -3,14 +3,14 @@ pub mod core;
 mod tests;
 pub mod traits;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct BadNameEntry {
@@ -20,17 +20,7 @@ pub struct BadNameEntry {
     pub new_name: String,
 }
 
-impl ResultEntry for BadNameEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(BadNameEntry);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct NameIssues {
@@ -62,11 +52,6 @@ impl NameIssues {
             && self.restricted_charset_allowed.is_none()
             && !self.remove_duplicated_non_alphanumeric
     }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct NameFixerParams {
-    // Empty - fixing has no parameters
 }
 
 #[derive(Default, Clone, Copy)]
@@ -105,13 +90,5 @@ pub struct BadNames {
 impl BadNames {
     pub const fn get_bad_names_files(&self) -> &Vec<BadNameEntry> {
         &self.bad_names_files
-    }
-
-    pub fn get_params(&self) -> &BadNamesParameters {
-        &self.params
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

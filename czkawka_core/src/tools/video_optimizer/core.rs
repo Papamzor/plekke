@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::mem;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -11,7 +12,7 @@ use rayon::prelude::*;
 use crate::common::cache::{load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::config_cache_path::get_config_cache_path;
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage, VideoOptimizerStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -44,7 +45,7 @@ impl VideoOptimizer {
     }
 
     #[fun_time(message = "scan_files", level = "debug")]
-    pub(crate) fn scan_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn scan_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .group_by(|_fe| ())
             .stop_flag(stop_flag)
@@ -76,14 +77,14 @@ impl VideoOptimizer {
 
                 self.common_data.text_messages.warnings.extend(warnings);
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         match self.params.clone() {
             VideoOptimizerParameters::VideoTranscode(params) => self.process_video_transcode(stop_flag, progress_sender, params),
             VideoOptimizerParameters::VideoCrop(_) => self.process_video_crop(stop_flag, progress_sender),
@@ -91,9 +92,9 @@ impl VideoOptimizer {
     }
 
     #[fun_time(message = "process_video_transcode", level = "debug")]
-    fn process_video_transcode(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, params: VideoTranscodeParams) -> WorkContinueStatus {
+    fn process_video_transcode(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, params: VideoTranscodeParams) -> ControlFlow<()> {
         if self.video_transcode_test_entries.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_video_transcode_cache();
@@ -132,17 +133,15 @@ impl VideoOptimizer {
         self.video_transcode_result_entries = entries;
         self.information.number_of_videos_to_transcode = self.video_transcode_result_entries.len();
 
-        if self.create_transcode_thumbnails(progress_sender, stop_flag, &params) == WorkContinueStatus::Stop {
-            return WorkContinueStatus::Stop;
-        }
+        self.create_transcode_thumbnails(progress_sender, stop_flag, &params)?;
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "process_video_crop", level = "debug")]
-    fn process_video_crop(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    fn process_video_crop(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.video_crop_test_entries.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let VideoOptimizerParameters::VideoCrop(params) = self.params.clone() else {
@@ -188,15 +187,13 @@ impl VideoOptimizer {
         self.video_crop_result_entries = vec_file_entry;
         self.information.number_of_videos_to_crop = self.video_crop_result_entries.len();
 
-        if self.create_crop_thumbnails(progress_sender, stop_flag, &params) == WorkContinueStatus::Stop {
-            return WorkContinueStatus::Stop;
-        }
+        self.create_crop_thumbnails(progress_sender, stop_flag, &params)?;
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "create_transcode_thumbnails", level = "debug")]
-    fn create_transcode_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoTranscodeParams) -> WorkContinueStatus {
+    fn create_transcode_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoTranscodeParams) -> ControlFlow<()> {
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::VideoOptimizer(VideoOptimizerStage::CreatingThumbnails),
@@ -205,13 +202,13 @@ impl VideoOptimizer {
         );
 
         let Some(config_cache_path) = get_config_cache_path() else {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         };
 
         let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
         if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
             debug!("Failed to create thumbnails directory: {e}");
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let thumbnail_video_percentage_from_start = params.thumbnail_video_percentage_from_start;
@@ -261,14 +258,14 @@ impl VideoOptimizer {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "create_crop_thumbnails", level = "debug")]
-    fn create_crop_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoCropParams) -> WorkContinueStatus {
+    fn create_crop_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoCropParams) -> ControlFlow<()> {
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::VideoOptimizer(VideoOptimizerStage::CreatingThumbnails),
@@ -277,13 +274,13 @@ impl VideoOptimizer {
         );
 
         let Some(config_cache_path) = get_config_cache_path() else {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         };
 
         let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
         if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
             debug!("Failed to create thumbnails directory: {e}");
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let thumbnail_video_percentage_from_start = params.thumbnail_video_percentage_from_start;
@@ -335,10 +332,10 @@ impl VideoOptimizer {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "load_video_transcode_cache", level = "debug")]
@@ -368,7 +365,7 @@ impl VideoOptimizer {
     }
 
     #[fun_time(message = "fix_files", level = "debug")]
-    pub(crate) fn fix_files(&mut self, stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>, fix_params: VideoOptimizerFixParams) {
+    pub fn fix_files(&mut self, stop_flag: &Arc<AtomicBool>, fix_params: VideoOptimizerFixParams) {
         match self.params.clone() {
             VideoOptimizerParameters::VideoTranscode(_) => {
                 let VideoOptimizerFixParams::VideoTranscode(video_transcode_params) = fix_params else {

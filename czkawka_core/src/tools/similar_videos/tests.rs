@@ -197,7 +197,6 @@ fn test_similar_videos_reference_mode_deletes_only_non_reference() {
     use std::path::Path;
 
     use crate::common::tool_data::DeleteMethod;
-    use crate::common::traits::DeletingItems;
     use crate::tools::similar_videos::VideosEntry;
 
     let temp_dir = TempDir::new().unwrap();

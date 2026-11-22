@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -9,7 +10,7 @@ pub use crate::common::deletion::{DeleteItemType, DeleteResult};
 use crate::common::directories::Directories;
 use crate::common::extensions::Extensions;
 use crate::common::items::ExcludedItems;
-use crate::common::model::{CheckingMethod, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::ProgressData;
 use crate::common::traits::ResultEntry;
 use crate::helpers::messages::Messages;
@@ -78,7 +79,7 @@ pub trait CommonData {
     type Parameters;
 
     fn get_information(&self) -> Self::Info;
-    fn get_params(&self) -> Self::Parameters;
+    fn get_params(&self) -> &Self::Parameters;
 
     fn get_cd(&self) -> &CommonToolData;
     fn get_cd_mut(&mut self) -> &mut CommonToolData;
@@ -225,8 +226,23 @@ pub trait CommonData {
         stop_flag: &Arc<AtomicBool>,
         progress_sender: Option<&Sender<ProgressData>>,
         delete_item_type: DeleteItemType<T>,
-    ) -> WorkContinueStatus {
+    ) -> ControlFlow<()> {
         deletion::delete_simple_elements_and_add_to_messages(self.get_cd_mut(), stop_flag, progress_sender, delete_item_type)
+    }
+
+    /// Deletes what `items` builds when the delete method is [`DeleteMethod::Delete`], the only one tools without groups support.
+    fn delete_if_requested<T: ResultEntry + Sized + Send + Sync>(
+        &mut self,
+        stop_flag: &Arc<AtomicBool>,
+        progress_sender: Option<&Sender<ProgressData>>,
+        items: impl FnOnce(&Self) -> DeleteItemType<T>,
+    ) -> ControlFlow<()> {
+        // Simple-list tools have no "keep one per group" notion, so any method other than None means delete
+        if self.get_cd().delete_method == DeleteMethod::None {
+            return ControlFlow::Continue(());
+        }
+        let items = items(self);
+        self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, items)
     }
 
     fn delete_advanced_elements_and_add_to_messages<T: ResultEntry + Sized + Send + Sync + Clone>(
@@ -234,7 +250,7 @@ pub trait CommonData {
         stop_flag: &Arc<AtomicBool>,
         progress_sender: Option<&Sender<ProgressData>>,
         files_to_process: Vec<Vec<T>>,
-    ) -> WorkContinueStatus {
+    ) -> ControlFlow<()> {
         deletion::delete_advanced_elements_and_add_to_messages(self.get_cd_mut(), stop_flag, progress_sender, files_to_process)
     }
 
@@ -247,6 +263,35 @@ pub trait CommonData {
         deletion::delete_elements(self.get_cd(), stop_flag, progress_sender, delete_item_type)
     }
 }
+
+/// Implements [`CommonData`] for a tool with `common_data`, `information` and (unless the parameter type is `()`)
+/// `params` fields. Tool-specific methods such as `found_any_items` follow the three types.
+macro_rules! impl_common_data {
+    (@impl $tool:ty, $info:ty, $params:ty, $($methods:tt)*) => {
+        impl $crate::common::tool_data::CommonData for $tool {
+            type Info = $info;
+            type Parameters = $params;
+
+            fn get_information(&self) -> Self::Info {
+                self.information
+            }
+            fn get_cd(&self) -> &$crate::common::tool_data::CommonToolData {
+                &self.common_data
+            }
+            fn get_cd_mut(&mut self) -> &mut $crate::common::tool_data::CommonToolData {
+                &mut self.common_data
+            }
+            $($methods)*
+        }
+    };
+    ($tool:ty, $info:ty, (), $($methods:tt)*) => {
+        $crate::common::tool_data::impl_common_data!(@impl $tool, $info, (), fn get_params(&self) -> &Self::Parameters { &() } $($methods)*);
+    };
+    ($tool:ty, $info:ty, $params:ty, $($methods:tt)*) => {
+        $crate::common::tool_data::impl_common_data!(@impl $tool, $info, $params, fn get_params(&self) -> &Self::Parameters { &self.params } $($methods)*);
+    };
+}
+pub(crate) use impl_common_data;
 
 #[cfg(test)]
 mod tests {

@@ -274,7 +274,6 @@ fn test_same_music_reference_mode_deletes_only_non_reference() {
     use tempfile::TempDir;
 
     use crate::common::tool_data::DeleteMethod;
-    use crate::common::traits::DeletingItems;
     use crate::tools::same_music::MusicEntry;
 
     let temp_dir = TempDir::new().unwrap();

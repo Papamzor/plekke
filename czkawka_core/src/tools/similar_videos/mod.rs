@@ -6,7 +6,7 @@ mod tests;
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use rusty_chromaprint::Configuration;
@@ -15,7 +15,7 @@ use similario_core::VideoSignature;
 
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 pub const MAX_TOLERANCE: i32 = 20;
 
@@ -79,29 +79,7 @@ pub struct VideoAudioEntry {
     pub audio_duration_seconds: u32,
 }
 
-impl ResultEntry for VideoAudioEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
-
-impl ResultEntry for VideosEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(VideoAudioEntry, VideosEntry);
 
 impl FileEntry {
     fn into_videos_entry(self) -> VideosEntry {
@@ -232,16 +210,8 @@ pub struct Info {
 }
 
 impl SimilarVideos {
-    pub fn get_params(&self) -> &SimilarVideosParameters {
-        &self.params
-    }
-
     pub const fn get_similar_videos(&self) -> &Vec<Vec<VideosEntry>> {
         &self.similar_vectors
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 
     pub fn get_similar_videos_referenced(&self) -> &Vec<(VideosEntry, Vec<VideosEntry>)> {
@@ -254,9 +224,5 @@ impl SimilarVideos {
         } else {
             self.similar_vectors.len()
         }
-    }
-
-    pub fn get_use_reference(&self) -> bool {
-        self.common_data.use_reference_folders
     }
 }

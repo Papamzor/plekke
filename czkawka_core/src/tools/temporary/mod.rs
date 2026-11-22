@@ -1,13 +1,10 @@
 pub mod core;
 pub mod traits;
 
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Serialize;
-
+use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
 
 pub const TEMP_EXTENSIONS: &[&str] = &[
     "#",
@@ -25,24 +22,7 @@ pub const TEMP_EXTENSIONS: &[&str] = &[
     ".partial",
 ];
 
-#[derive(Clone, Serialize, Debug)]
-pub struct TemporaryFileEntry {
-    pub path: PathBuf,
-    pub modified_date: u64,
-    pub size: u64,
-}
-
-impl ResultEntry for TemporaryFileEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+pub type TemporaryFileEntry = FileEntry;
 
 #[derive(Default, Clone, Copy)]
 pub struct Info {
@@ -77,9 +57,5 @@ pub struct Temporary {
 impl Temporary {
     pub const fn get_temporary_files(&self) -> &Vec<TemporaryFileEntry> {
         &self.temporary_files
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

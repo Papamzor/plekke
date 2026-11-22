@@ -14,7 +14,7 @@ pub enum SearchMode {
     SmallestFiles,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Info {
     pub number_of_real_files: usize,
     pub scanning_time: Duration,

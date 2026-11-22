@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -9,11 +10,11 @@ use log::debug;
 use rayon::prelude::*;
 
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
-use crate::tools::bad_names::{BadNameEntry, BadNames, BadNamesParameters, Info, NameFixerParams, NameIssues};
+use crate::tools::bad_names::{BadNameEntry, BadNames, BadNamesParameters, Info, NameIssues};
 
 impl BadNames {
     pub fn new(params: BadNamesParameters) -> Self {
@@ -27,7 +28,7 @@ impl BadNames {
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .group_by(|_fe| ())
             .stop_flag(stop_flag)
@@ -42,16 +43,16 @@ impl BadNames {
                 self.common_data.text_messages.warnings.extend(warnings);
                 debug!("check_files - Found {} files to check.", self.files_to_check.len());
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
     #[fun_time(message = "look_for_bad_names_files", level = "debug")]
-    pub(crate) fn look_for_bad_names_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn look_for_bad_names_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.files_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let progress_handler = prepare_thread_handler_common(
@@ -95,14 +96,14 @@ impl BadNames {
         debug!("Found {} files with bad names.", self.information.number_of_files_with_bad_names);
 
         if check_if_stop_received(stop_flag) {
-            WorkContinueStatus::Stop
+            ControlFlow::Break(())
         } else {
-            WorkContinueStatus::Continue
+            ControlFlow::Continue(())
         }
     }
 
     #[fun_time(message = "fix_bad_names", level = "debug")]
-    pub fn fix_bad_names(&mut self, _fix_params: NameFixerParams, stop_flag: &Arc<AtomicBool>) {
+    pub fn fix_bad_names(&mut self, stop_flag: &Arc<AtomicBool>) {
         let warnings: Vec<_> = mem::take(&mut self.bad_names_files)
             .into_par_iter()
             .map(|entry| {

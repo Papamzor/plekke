@@ -14,7 +14,7 @@ use std::io::SeekFrom;
 use std::io::prelude::*;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -26,7 +26,7 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::common::model::{CheckingMethod, FileEntry, HashType};
 use crate::common::progress_stop_handler::check_if_stop_received;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 use crate::flc;
 
 pub const PREHASHING_BUFFER_SIZE: u64 = 4 * 1024;
@@ -43,17 +43,7 @@ pub struct DuplicateEntry {
     pub size: u64,
     pub hash: String,
 }
-impl ResultEntry for DuplicateEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(DuplicateEntry);
 
 impl FileEntry {
     fn into_duplicate_entry(self) -> DuplicateEntry {
@@ -169,10 +159,6 @@ pub trait MyHasher {
 }
 
 impl DuplicateFinder {
-    pub fn get_params(&self) -> &DuplicateFinderParameters {
-        &self.params
-    }
-
     pub const fn get_files_sorted_by_names(&self) -> &BTreeMap<String, Vec<DuplicateEntry>> {
         &self.files_with_identical_names
     }
@@ -187,18 +173,6 @@ impl DuplicateFinder {
 
     pub const fn get_files_sorted_by_hash(&self) -> &BTreeMap<u64, Vec<Vec<DuplicateEntry>>> {
         &self.files_with_identical_hashes
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
-    }
-
-    pub fn set_dry_run(&mut self, dry_run: bool) {
-        self.common_data.dry_run = dry_run;
-    }
-
-    pub fn get_use_reference(&self) -> bool {
-        self.common_data.use_reference_folders
     }
 
     pub fn get_files_with_identical_hashes_referenced(&self) -> &BTreeMap<u64, Vec<(DuplicateEntry, Vec<DuplicateEntry>)>> {

@@ -6,14 +6,14 @@ mod tests;
 pub mod traits;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Debug)]
 pub enum CheckedTypesSingle {
@@ -45,17 +45,7 @@ impl BrokenEntry {
     }
 }
 
-impl ResultEntry for BrokenEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(BrokenEntry);
 
 impl FileEntry {
     fn into_broken_entry(self) -> BrokenEntry {
@@ -133,13 +123,5 @@ pub struct BrokenFiles {
 impl BrokenFiles {
     pub const fn get_broken_files(&self) -> &Vec<BrokenEntry> {
         &self.broken_files
-    }
-
-    pub(crate) fn get_params(&self) -> &BrokenFilesParameters {
-        &self.params
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

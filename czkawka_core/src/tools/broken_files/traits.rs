@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -12,27 +13,24 @@ use crate::common::consts::{
     XZ_FILES_EXTENSIONS, YAML_FILES_EXTENSIONS, ZIP_FILES_EXTENSIONS, ZST_FILES_EXTENSIONS,
 };
 use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, DeleteItemType, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::flc;
 use crate::tools::broken_files::{BrokenFiles, BrokenFilesParameters, CheckedTypes, Info};
-
-impl AllTraits for BrokenFiles {}
 
 impl Search for BrokenFiles {
     #[fun_time(message = "find_broken_files", level = "info")]
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             let video_types = CheckedTypes::VIDEO_FFPROBE | CheckedTypes::VIDEO_FFMPEG;
             if self.params.checked_types.intersects(video_types) && !check_if_ffprobe_ffmpeg_exists() {
                 self.common_data.text_messages.critical = Some(flc!("core_ffmpeg_not_found"));
                 #[cfg(target_os = "windows")]
                 self.common_data.text_messages.errors.push(flc!("core_ffmpeg_not_found_windows"));
-                return;
+                return ControlFlow::Continue(());
             }
 
             let simple_mappings: &[(CheckedTypes, &[&str])] = &[
@@ -75,24 +73,17 @@ impl Search for BrokenFiles {
 
             if extensions.is_empty() {
                 self.common_data.text_messages.critical = Some(flc!("core_needs_to_set_at_least_one_broken_option"));
-                return;
+                return ControlFlow::Continue(());
             }
 
             if self.prepare_items(Some(&extensions)).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
-            if self.check_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.look_for_broken_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.delete_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.check_files(stop_flag, progress_sender)?;
+            self.look_for_broken_files(stop_flag, progress_sender)?;
+            self.delete_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
@@ -118,33 +109,15 @@ impl PrintResults for BrokenFiles {
         self.save_results_to_file_as_json_internal(file_name, &self.broken_files, pretty_print)
     }
 }
-impl DeletingItems for BrokenFiles {
+impl BrokenFiles {
     #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        match self.common_data.delete_method {
-            DeleteMethod::Delete => self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, DeleteItemType::DeletingFiles(self.broken_files.clone())),
-            DeleteMethod::None => WorkContinueStatus::Continue,
-            _ => unreachable!(),
-        }
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        self.delete_if_requested(stop_flag, progress_sender, |tool| DeleteItemType::DeletingFiles(tool.broken_files.clone()))
     }
 }
 
-impl CommonData for BrokenFiles {
-    type Info = Info;
-    type Parameters = BrokenFilesParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    BrokenFiles, Info, BrokenFilesParameters,
     fn found_any_items(&self) -> bool {
         self.information.number_of_broken_files > 0
     }

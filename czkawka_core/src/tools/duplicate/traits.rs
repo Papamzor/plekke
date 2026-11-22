@@ -1,5 +1,6 @@
 use std::io::prelude::*;
 use std::io::{self};
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -8,19 +9,17 @@ use crossbeam_channel::Sender;
 use fun_time::fun_time;
 use humansize::{DECIMAL, format_size};
 
-use crate::common::model::{CheckingMethod, WorkContinueStatus};
+use crate::common::model::CheckingMethod;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, DeleteItemType, DeleteMethod, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::tools::duplicate::{DuplicateFinder, DuplicateFinderParameters, Info};
 
-impl AllTraits for DuplicateFinder {}
-
-impl DeletingItems for DuplicateFinder {
+impl DuplicateFinder {
     #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.common_data.delete_method == DeleteMethod::None {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         if self.common_data.use_reference_folders {
@@ -77,47 +76,25 @@ impl Search for DuplicateFinder {
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if self.prepare_items(None).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
             self.common_data.use_reference_folders = !self.common_data.directories.reference_directories.is_empty() || !self.common_data.directories.reference_files.is_empty();
 
             match self.get_params().check_method {
-                CheckingMethod::Name => {
-                    self.common_data.stopped_search = self.check_files_name(stop_flag, progress_sender) == WorkContinueStatus::Stop;
-                    if self.common_data.stopped_search {
-                        return;
-                    }
-                }
-                CheckingMethod::SizeName => {
-                    self.common_data.stopped_search = self.check_files_size_name(stop_flag, progress_sender) == WorkContinueStatus::Stop;
-                    if self.common_data.stopped_search {
-                        return;
-                    }
-                }
-                CheckingMethod::Size => {
-                    self.common_data.stopped_search = self.check_files_size(stop_flag, progress_sender) == WorkContinueStatus::Stop;
-                    if self.common_data.stopped_search {
-                        return;
-                    }
-                }
+                CheckingMethod::Name => self.check_files_name(stop_flag, progress_sender)?,
+                CheckingMethod::SizeName => self.check_files_size_name(stop_flag, progress_sender)?,
+                CheckingMethod::Size => self.check_files_size(stop_flag, progress_sender)?,
                 CheckingMethod::Hash => {
-                    self.common_data.stopped_search = self.check_files_size(stop_flag, progress_sender) == WorkContinueStatus::Stop;
-                    if self.common_data.stopped_search {
-                        return;
-                    }
-                    self.common_data.stopped_search = self.check_files_hash(stop_flag, progress_sender) == WorkContinueStatus::Stop;
-                    if self.common_data.stopped_search {
-                        return;
-                    }
+                    self.check_files_size(stop_flag, progress_sender)?;
+                    self.check_files_hash(stop_flag, progress_sender)?;
                 }
                 _ => panic!(),
             }
-            if self.delete_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.delete_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
@@ -304,7 +281,7 @@ impl PrintResults for DuplicateFinder {
 
     // TODO - check if is possible to save also data in header about size and name in SizeName mode - https://github.com/qarmin/czkawka/issues/1137
     fn save_results_to_file_as_json(&self, file_name: &str, pretty_print: bool) -> io::Result<()> {
-        if self.get_use_reference() {
+        if self.get_use_reference_folders() {
             match self.get_params().check_method {
                 CheckingMethod::Name => self.save_results_to_file_as_json_internal(file_name, &self.files_with_identical_names_referenced, pretty_print),
                 CheckingMethod::SizeName => {
@@ -326,24 +303,10 @@ impl PrintResults for DuplicateFinder {
     }
 }
 
-impl CommonData for DuplicateFinder {
-    type Info = Info;
-    type Parameters = DuplicateFinderParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    DuplicateFinder, Info, DuplicateFinderParameters,
     fn get_check_method(&self) -> CheckingMethod {
-        self.get_params().check_method
+        self.params.check_method
     }
     fn found_any_items(&self) -> bool {
         // Hash mode also fills the size counters during its pre-filter, so only the active method counts

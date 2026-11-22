@@ -250,7 +250,6 @@ fn test_similar_images_reference_mode_deletes_only_non_reference() {
     use tempfile::TempDir;
 
     use crate::common::tool_data::DeleteMethod;
-    use crate::common::traits::DeletingItems;
     use crate::tools::similar_images::ImagesEntry;
 
     let temp_dir = TempDir::new().unwrap();

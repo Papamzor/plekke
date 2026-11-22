@@ -6,7 +6,7 @@ pub mod traits;
 mod tests;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use rusty_chromaprint::Configuration;
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::model::{CheckingMethod, FileEntry};
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 bitflags! {
     #[derive(PartialEq, Copy, Clone, Debug)]
@@ -46,17 +46,7 @@ pub struct MusicEntry {
     pub bitrate: u32,
 }
 
-impl ResultEntry for MusicEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(MusicEntry);
 
 impl FileEntry {
     fn into_music_entry(self) -> MusicEntry {
@@ -136,14 +126,6 @@ impl SameMusic {
         &self.duplicated_music_entries
     }
 
-    pub fn get_params(&self) -> &SameMusicParameters {
-        &self.params
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
-    }
-
     pub fn get_similar_music_referenced(&self) -> &Vec<(MusicEntry, Vec<MusicEntry>)> {
         &self.duplicated_music_entries_referenced
     }
@@ -154,9 +136,5 @@ impl SameMusic {
         } else {
             self.duplicated_music_entries.len()
         }
-    }
-
-    pub fn get_use_reference(&self) -> bool {
-        self.common_data.use_reference_folders
     }
 }

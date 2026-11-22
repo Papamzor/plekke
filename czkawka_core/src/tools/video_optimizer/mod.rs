@@ -5,7 +5,7 @@ mod tests;
 pub mod traits;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub use self::encoding::{HardwareEncoder, NoiseReductionMethod, VideoCodec};
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 use crate::flc;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -219,29 +219,7 @@ pub struct VideoCropEntry {
     pub thumbnail_path: Option<PathBuf>,
 }
 
-impl ResultEntry for VideoTranscodeEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
-
-impl ResultEntry for VideoCropEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(VideoTranscodeEntry, VideoCropEntry);
 
 impl FileEntry {
     fn into_video_transcode_entry(self) -> VideoTranscodeEntry {
@@ -293,13 +271,5 @@ impl VideoOptimizer {
 
     pub const fn get_video_crop_entries(&self) -> &Vec<VideoCropEntry> {
         &self.video_crop_result_entries
-    }
-
-    pub const fn get_params(&self) -> &VideoOptimizerParameters {
-        &self.params
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

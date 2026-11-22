@@ -7,7 +7,7 @@ pub use core::return_similarity_from_similarity_preset;
 mod tests;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use hamming_bitwise_fast::hamming_bitwise_fast;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::common::bk_tree::BKTree;
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 type ImHash = Vec<u8>;
 
@@ -41,17 +41,7 @@ pub struct ImagesEntry {
     pub difference: u32,
 }
 
-impl ResultEntry for ImagesEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(ImagesEntry);
 impl FileEntry {
     fn into_images_entry(self) -> ImagesEntry {
         ImagesEntry {
@@ -168,23 +158,11 @@ pub struct Info {
 }
 
 impl SimilarImages {
-    pub fn get_params(&self) -> &SimilarImagesParameters {
-        &self.params
-    }
-
     pub const fn get_similar_images(&self) -> &Vec<Vec<ImagesEntry>> {
         &self.similar_vectors
     }
 
     pub fn get_similar_images_referenced(&self) -> &Vec<(ImagesEntry, Vec<ImagesEntry>)> {
         &self.similar_referenced_vectors
-    }
-
-    pub fn get_use_reference(&self) -> bool {
-        self.common_data.use_reference_folders
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

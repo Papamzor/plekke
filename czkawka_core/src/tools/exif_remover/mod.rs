@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Info {
@@ -50,17 +50,7 @@ pub struct ExifTagsFixerParams {
     pub override_file: bool,
 }
 
-impl ResultEntry for ExifEntry {
-    fn get_path(&self) -> &std::path::Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(ExifEntry);
 
 pub struct ExifRemover {
     common_data: CommonToolData,
@@ -74,9 +64,5 @@ pub struct ExifRemover {
 impl ExifRemover {
     pub const fn get_exif_files(&self) -> &Vec<ExifEntry> {
         &self.exif_files
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

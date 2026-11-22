@@ -1,4 +1,5 @@
 use std::io::prelude::*;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -6,31 +7,24 @@ use std::time::Instant;
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
-use crate::tools::empty_files::{EmptyFiles, Info};
-
-impl AllTraits for EmptyFiles {}
+use crate::common::tool_data::{CommonData, DeleteItemType, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
+use crate::tools::empty_files::{EmptyFiles, EmptyFilesParameters, Info};
 
 impl Search for EmptyFiles {
     #[fun_time(message = "find_empty_files", level = "info")]
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if self.prepare_items(None).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
-            if self.check_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.delete_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.check_files(stop_flag, progress_sender)?;
+            self.delete_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
@@ -56,31 +50,15 @@ impl PrintResults for EmptyFiles {
         self.save_results_to_file_as_json_internal(file_name, &self.empty_files, pretty_print)
     }
 }
-impl CommonData for EmptyFiles {
-    type Info = Info;
-    type Parameters = ();
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {}
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    EmptyFiles, Info, EmptyFilesParameters,
     fn found_any_items(&self) -> bool {
         self.information.number_of_empty_files > 0
     }
 }
-impl DeletingItems for EmptyFiles {
+impl EmptyFiles {
     #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        match self.common_data.delete_method {
-            DeleteMethod::Delete => self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, DeleteItemType::DeletingFiles(self.empty_files.clone())),
-            DeleteMethod::None => WorkContinueStatus::Continue,
-            _ => unreachable!(),
-        }
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        self.delete_if_requested(stop_flag, progress_sender, |tool| DeleteItemType::DeletingFiles(tool.empty_files.clone()))
     }
 }

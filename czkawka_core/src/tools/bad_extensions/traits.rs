@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -6,52 +7,33 @@ use std::time::Instant;
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData, DeleteItemType, DeleteMethod};
-use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
-use crate::tools::bad_extensions::{BadExtensions, BadExtensionsFixParams, BadExtensionsParameters, Info};
-
-impl AllTraits for BadExtensions {}
+use crate::common::tool_data::{CommonData, DeleteItemType, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
+use crate::tools::bad_extensions::{BadExtensions, BadExtensionsParameters, Info};
 
 impl Search for BadExtensions {
     #[fun_time(message = "find_bad_extensions_files", level = "info")]
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if self.prepare_items(None).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
-            if self.check_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.look_for_bad_extensions_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.check_files(stop_flag, progress_sender)?;
+            self.look_for_bad_extensions_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
 }
 
-impl DeletingItems for BadExtensions {
-    fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        match self.common_data.delete_method {
-            DeleteMethod::Delete => self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, DeleteItemType::DeletingFiles(self.bad_extensions_files.clone())),
-            DeleteMethod::None => WorkContinueStatus::Continue,
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl FixingItems for BadExtensions {
-    type FixParams = BadExtensionsFixParams;
-
-    #[fun_time(message = "fix_items", level = "debug")]
-    fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
-        self.fix_bad_extensions(fix_params, stop_flag);
+impl BadExtensions {
+    #[fun_time(message = "delete_files", level = "debug")]
+    pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        self.delete_if_requested(stop_flag, progress_sender, |tool| DeleteItemType::DeletingFiles(tool.bad_extensions_files.clone()))
     }
 }
 
@@ -72,23 +54,9 @@ impl PrintResults for BadExtensions {
     }
 }
 
-impl CommonData for BadExtensions {
-    type Info = Info;
-    type Parameters = BadExtensionsParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    BadExtensions, Info, BadExtensionsParameters,
     fn found_any_items(&self) -> bool {
-        self.get_information().number_of_files_with_bad_extension > 0
+        self.information.number_of_files_with_bad_extension > 0
     }
 }

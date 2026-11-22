@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -7,7 +8,6 @@ use humansize::{DECIMAL, format_size};
 use log::info;
 use rayon::prelude::*;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::check_if_stop_received;
 use crate::common::tool_data::{CommonToolData, DeleteMethod};
@@ -62,14 +62,14 @@ pub(crate) fn delete_simple_elements_and_add_to_messages<T: ResultEntry + Sized 
     stop_flag: &Arc<AtomicBool>,
     progress_sender: Option<&Sender<ProgressData>>,
     delete_item_type: DeleteItemType<T>,
-) -> WorkContinueStatus {
+) -> ControlFlow<()> {
     let delete_results = delete_elements(cd, stop_flag, progress_sender, delete_item_type);
 
     if check_if_stop_received(stop_flag) {
-        WorkContinueStatus::Stop
+        ControlFlow::Break(())
     } else {
         delete_results.add_to_messages(&mut cd.text_messages);
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn delete_advanced_elements_and_add_to_messages<T: ResultEntry + Size
     stop_flag: &Arc<AtomicBool>,
     progress_sender: Option<&Sender<ProgressData>>,
     files_to_process: Vec<Vec<T>>,
-) -> WorkContinueStatus {
+) -> ControlFlow<()> {
     let delete_method = cd.delete_method;
     let sorting_by_size = matches!(
         delete_method,
@@ -156,10 +156,10 @@ pub(crate) fn delete_advanced_elements_and_add_to_messages<T: ResultEntry + Size
     };
 
     if check_if_stop_received(stop_flag) {
-        WorkContinueStatus::Stop
+        ControlFlow::Break(())
     } else {
         delete_results.add_to_messages(&mut cd.text_messages);
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 }
 
@@ -340,7 +340,9 @@ mod tests {
         type Parameters = ();
 
         fn get_information(&self) -> Self::Info {}
-        fn get_params(&self) -> Self::Parameters {}
+        fn get_params(&self) -> &Self::Parameters {
+            &()
+        }
         fn get_cd(&self) -> &CommonToolData {
             &self.common_data
         }
@@ -548,7 +550,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_simple_elements_and_add_to_messages(&stop_flag, None, DeleteItemType::DeletingFiles(files));
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "File 1 should be deleted");
         assert!(!file2.exists(), "File 2 should be deleted");
         assert_eq!(tool.common_data.text_messages.errors.len(), 0, "Should have no errors");
@@ -570,7 +572,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(true));
         let status = tool.delete_simple_elements_and_add_to_messages(&stop_flag, None, DeleteItemType::DeletingFiles(files));
 
-        assert_eq!(status, WorkContinueStatus::Stop, "Should stop");
+        assert_eq!(status, ControlFlow::Break(()), "Should stop");
         assert!(file1.exists(), "File should still exist");
     }
 
@@ -608,7 +610,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "Oldest file should be deleted");
         assert!(!file2.exists(), "Middle file should be deleted");
         assert!(file3.exists(), "Newest file should be kept");
@@ -648,7 +650,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(file1.exists(), "Oldest file should be kept");
         assert!(!file2.exists(), "Middle file should be deleted");
         assert!(!file3.exists(), "Newest file should be deleted");
@@ -688,7 +690,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "Oldest file should be deleted");
         assert!(file2.exists(), "Middle file should be kept");
         assert!(file3.exists(), "Newest file should be kept");
@@ -728,7 +730,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(file1.exists(), "Oldest file should be kept");
         assert!(file2.exists(), "Middle file should be kept");
         assert!(!file3.exists(), "Newest file should be deleted");
@@ -768,7 +770,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "Smallest file should be deleted");
         assert!(!file2.exists(), "Middle file should be deleted");
         assert!(file3.exists(), "Biggest file should be kept");
@@ -808,7 +810,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(file1.exists(), "Smallest file should be kept");
         assert!(!file2.exists(), "Middle file should be deleted");
         assert!(!file3.exists(), "Biggest file should be deleted");
@@ -841,7 +843,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "All files should be deleted");
         assert!(!file2.exists(), "All files should be deleted");
     }
@@ -891,7 +893,7 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Continue, "Should continue");
+        assert_eq!(status, ControlFlow::Continue(()), "Should continue");
         assert!(!file1.exists(), "Oldest from group 1 should be deleted");
         assert!(file2.exists(), "Newest from group 1 should be kept");
         assert!(!file3.exists(), "Oldest from group 2 should be deleted");
@@ -925,6 +927,6 @@ mod tests {
         let stop_flag = Arc::new(AtomicBool::new(true));
         let status = tool.delete_advanced_elements_and_add_to_messages(&stop_flag, None, files_group);
 
-        assert_eq!(status, WorkContinueStatus::Stop, "Should stop");
+        assert_eq!(status, ControlFlow::Break(()), "Should stop");
     }
 }

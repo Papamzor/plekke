@@ -4,14 +4,14 @@ mod tests;
 pub mod traits;
 
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
-use crate::common::traits::ResultEntry;
+use crate::common::traits::impl_result_entry;
 use crate::flc;
 
 #[derive(Default, Clone, Copy)]
@@ -60,17 +60,7 @@ pub struct SymlinksFileEntry {
     pub symlink_info: SymlinkInfo,
 }
 
-impl ResultEntry for SymlinksFileEntry {
-    fn get_path(&self) -> &Path {
-        &self.path
-    }
-    fn get_modified_date(&self) -> u64 {
-        self.modified_date
-    }
-    fn get_size(&self) -> u64 {
-        self.size
-    }
-}
+impl_result_entry!(SymlinksFileEntry);
 
 impl FileEntry {
     fn into_symlinks_entry(self, symlink_info: SymlinkInfo) -> SymlinksFileEntry {
@@ -99,9 +89,5 @@ impl Default for InvalidSymlinks {
 impl InvalidSymlinks {
     pub const fn get_invalid_symlinks(&self) -> &Vec<SymlinksFileEntry> {
         &self.invalid_symlinks
-    }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
     }
 }

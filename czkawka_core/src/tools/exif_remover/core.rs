@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -14,7 +15,7 @@ use rayon::prelude::*;
 
 use crate::common::cache::{CACHE_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::{CacheLoadPhase, ExifRemoverStage, ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -51,7 +52,7 @@ impl ExifRemover {
     }
 
     #[fun_time(message = "find_exif_files", level = "debug")]
-    pub(crate) fn find_exif_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn find_exif_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .common_data(&self.common_data)
             .group_by(|_fe| ())
@@ -80,10 +81,10 @@ impl ExifRemover {
                 self.common_data.text_messages.warnings.extend(warnings);
                 debug!("find_exif_files - Found {} files to check.", self.files_to_check.len());
 
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -116,9 +117,9 @@ impl ExifRemover {
     }
 
     #[fun_time(message = "check_exif_in_files", level = "debug")]
-    pub(crate) fn check_exif_in_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_exif_in_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.files_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_cache(stop_flag, progress_sender);
@@ -189,14 +190,14 @@ impl ExifRemover {
         self.files_to_check = Default::default();
 
         if check_if_stop_received(stop_flag) {
-            WorkContinueStatus::Stop
+            ControlFlow::Break(())
         } else {
-            WorkContinueStatus::Continue
+            ControlFlow::Continue(())
         }
     }
 
     #[fun_time(message = "fix_files", level = "debug")]
-    pub(crate) fn fix_files(&mut self, stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>, fix_params: ExifTagsFixerParams) {
+    pub fn fix_files(&mut self, stop_flag: &Arc<AtomicBool>, fix_params: ExifTagsFixerParams) {
         let warnings: Vec<_> = mem::take(&mut self.exif_files)
             .into_par_iter()
             .map(|entry| {

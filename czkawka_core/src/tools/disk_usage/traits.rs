@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -6,20 +7,11 @@ use std::time::Instant;
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::traits::{AllTraits, DeletingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::tools::disk_usage::report::{build_report, write_report};
 use crate::tools::disk_usage::{DiskUsage, DiskUsageParameters, Info};
-
-impl AllTraits for DiskUsage {}
-
-impl DeletingItems for DiskUsage {
-    fn delete_files(&mut self, _stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        WorkContinueStatus::Continue
-    }
-}
 
 impl PrintResults for DiskUsage {
     fn write_results<T: Write>(&self, writer: &mut T) -> std::io::Result<()> {
@@ -48,35 +40,20 @@ impl Search for DiskUsage {
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if self.prepare_items(None).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
-            if self.scan_disk_usage(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.scan_disk_usage(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
 }
 
-impl CommonData for DiskUsage {
-    type Info = Info;
-    type Parameters = DiskUsageParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information.clone()
-    }
-    fn get_params(&self) -> Self::Parameters {
-        self.params
-    }
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
+impl_common_data! {
+    DiskUsage, Info, DiskUsageParameters,
     fn found_any_items(&self) -> bool {
         self.information.number_of_files > 0
     }

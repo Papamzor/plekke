@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
@@ -9,29 +10,11 @@ use humansize::{DECIMAL, format_size};
 
 use crate::common::consts::VIDEO_FILES_EXTENSIONS;
 use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
-use crate::common::model::WorkContinueStatus;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::traits::{AllTraits, DeletingItems, FixingItems, PrintResults, Search};
+use crate::common::tool_data::{CommonData, impl_common_data};
+use crate::common::traits::{PrintResults, Search};
 use crate::flc;
-use crate::tools::video_optimizer::{Info, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters};
-
-impl AllTraits for VideoOptimizer {}
-
-impl DeletingItems for VideoOptimizer {
-    #[fun_time(message = "delete_files", level = "debug")]
-    fn delete_files(&mut self, _stop_flag: &Arc<AtomicBool>, _progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        unreachable!("VideoOptimizer does not support deleting files");
-    }
-}
-
-impl FixingItems for VideoOptimizer {
-    type FixParams = VideoOptimizerFixParams;
-    #[fun_time(message = "fix_items", level = "debug")]
-    fn fix_items(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, fix_params: Self::FixParams) {
-        self.fix_files(stop_flag, progress_sender, fix_params);
-    }
-}
+use crate::tools::video_optimizer::{Info, VideoOptimizer, VideoOptimizerParameters};
 
 impl PrintResults for VideoOptimizer {
     fn write_results<T: Write>(&self, writer: &mut T) -> std::io::Result<()> {
@@ -110,50 +93,28 @@ impl Search for VideoOptimizer {
     fn search(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) {
         let start_time = Instant::now();
 
-        let () = (|| {
+        self.common_data.stopped_search |= (|| {
             if !check_if_ffprobe_ffmpeg_exists() {
                 self.common_data.text_messages.critical = Some(flc!("core_ffmpeg_not_found"));
                 #[cfg(target_os = "windows")]
                 self.common_data.text_messages.errors.push(flc!("core_ffmpeg_not_found_windows"));
-                return;
+                return ControlFlow::Continue(());
             }
 
             if self.prepare_items(Some(VIDEO_FILES_EXTENSIONS)).is_err() {
-                return;
+                return ControlFlow::Continue(());
             }
-            if self.scan_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-                return;
-            }
-            if self.check_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-                self.common_data.stopped_search = true;
-            }
-        })();
+            self.scan_files(stop_flag, progress_sender)?;
+            self.check_files(stop_flag, progress_sender)
+        })()
+        .is_break();
 
         self.information.scanning_time = start_time.elapsed();
     }
 }
 
-impl CommonData for VideoOptimizer {
-    type Info = Info;
-    type Parameters = VideoOptimizerParameters;
-
-    fn get_information(&self) -> Self::Info {
-        self.information
-    }
-
-    fn get_params(&self) -> Self::Parameters {
-        self.params.clone()
-    }
-
-    fn get_cd(&self) -> &CommonToolData {
-        &self.common_data
-    }
-
-    fn get_cd_mut(&mut self) -> &mut CommonToolData {
-        &mut self.common_data
-    }
-
+impl_common_data! {
+    VideoOptimizer, Info, VideoOptimizerParameters,
     fn found_any_items(&self) -> bool {
         match &self.params {
             VideoOptimizerParameters::VideoTranscode(_) => self.information.number_of_videos_to_transcode > 0,

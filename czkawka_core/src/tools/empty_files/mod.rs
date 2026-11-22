@@ -42,8 +42,4 @@ impl EmptyFiles {
     pub const fn get_empty_files(&self) -> &Vec<FileEntry> {
         &self.empty_files
     }
-
-    pub const fn get_information(&self) -> Info {
-        self.information
-    }
 }

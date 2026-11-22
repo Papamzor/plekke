@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io, mem};
@@ -9,7 +10,7 @@ use log::debug;
 use rayon::prelude::*;
 
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{CheckingMethod, FileEntry, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, FileEntry, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -58,7 +59,7 @@ impl EmptyFiles {
     }
 
     #[fun_time(message = "collect_files", level = "debug")]
-    pub(crate) fn collect_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn collect_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let checking_method = self.effective_checking_method();
         let max_size = if checking_method == CheckingMethod::EmptyFilesContent { u64::MAX } else { 0 };
 
@@ -87,17 +88,17 @@ impl EmptyFiles {
                     self.empty_files.len(),
                     self.files_to_check.len()
                 );
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
     #[fun_time(message = "check_content", level = "debug")]
-    pub(crate) fn check_content(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_content(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let files = mem::take(&mut self.files_to_check);
         if files.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let total_size: u64 = files.iter().map(|fe| fe.size).sum();
@@ -130,25 +131,21 @@ impl EmptyFiles {
         progress_handler.join_thread();
 
         if stopped.load(Ordering::Relaxed) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         self.empty_files.append(&mut matches);
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
-        if self.collect_files(stop_flag, progress_sender) == WorkContinueStatus::Stop {
-            return WorkContinueStatus::Stop;
-        }
-        if (self.params.search_zero_byte_content_files || self.params.search_non_printable_content_files)
-            && self.check_content(stop_flag, progress_sender) == WorkContinueStatus::Stop
-        {
-            return WorkContinueStatus::Stop;
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        self.collect_files(stop_flag, progress_sender)?;
+        if self.params.search_zero_byte_content_files || self.params.search_non_printable_content_files {
+            self.check_content(stop_flag, progress_sender)?;
         }
         self.information.number_of_empty_files = self.empty_files.len();
         debug!("Found {} empty files total.", self.information.number_of_empty_files);
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 }

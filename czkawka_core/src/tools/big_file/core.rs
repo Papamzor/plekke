@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -8,7 +9,7 @@ use log::debug;
 use rayon::prelude::*;
 
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{ToolType, WorkContinueStatus};
+use crate::common::model::ToolType;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, CommonToolData};
 use crate::tools::big_file::{BigFile, BigFileParameters, Info, SearchMode};
@@ -24,7 +25,7 @@ impl BigFile {
     }
 
     #[fun_time(message = "look_for_big_files", level = "debug")]
-    pub(crate) fn look_for_big_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn look_for_big_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .group_by(|_fe| ())
             .stop_flag(stop_flag)
@@ -52,10 +53,10 @@ impl BigFile {
                 self.common_data.text_messages.warnings.extend(warnings);
                 self.information.number_of_real_files = self.big_files.len();
                 debug!("check_files - Found {} biggest/smallest files.", self.big_files.len());
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 }

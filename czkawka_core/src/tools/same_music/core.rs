@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{mem, panic};
@@ -18,7 +19,7 @@ use crate::common::audio_fingerprint::calc_fingerprint_and_duration;
 use crate::common::cache::{CACHE_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
 use crate::common::create_crash_message;
 use crate::common::dir_traversal::{DirTraversalBuilder, DirTraversalResult};
-use crate::common::model::{CheckingMethod, ToolType, WorkContinueStatus};
+use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, ProgressData, SameMusicMode, SameMusicStage, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
@@ -41,7 +42,7 @@ impl SameMusic {
     }
 
     #[fun_time(message = "check_files", level = "debug")]
-    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let result = DirTraversalBuilder::new()
             .group_by(|_fe| ())
             .stop_flag(stop_flag)
@@ -59,10 +60,10 @@ impl SameMusic {
                     .collect();
                 self.common_data.text_messages.warnings.extend(warnings);
                 debug!("check_files - Found {} music files.", self.music_to_check.len());
-                WorkContinueStatus::Continue
+                ControlFlow::Continue(())
             }
 
-            DirTraversalResult::Stopped => WorkContinueStatus::Stop,
+            DirTraversalResult::Stopped => ControlFlow::Break(()),
         }
     }
 
@@ -77,12 +78,12 @@ impl SameMusic {
     }
 
     #[fun_time(message = "calculate_fingerprint", level = "debug")]
-    pub(crate) fn calculate_fingerprint(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn calculate_fingerprint(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.music_entries.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
-        let mode = match self.get_params().check_type {
+        let mode = match self.params.check_type {
             CheckingMethod::AudioTags => SameMusicMode::AudioTags,
             CheckingMethod::AudioContent => SameMusicMode::AudioContent,
             _ => unreachable!("SameMusic only supports AudioTags and AudioContent"),
@@ -114,7 +115,7 @@ impl SameMusic {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         let progress_handler = prepare_thread_handler_common(
@@ -166,18 +167,18 @@ impl SameMusic {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "read_tags", level = "debug")]
-    pub(crate) fn read_tags(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn read_tags(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.music_to_check.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
-        let mode = match self.get_params().check_type {
+        let mode = match self.params.check_type {
             CheckingMethod::AudioTags => SameMusicMode::AudioTags,
             CheckingMethod::AudioContent => SameMusicMode::AudioContent,
             _ => unreachable!("SameMusic only supports AudioTags and AudioContent"),
@@ -189,7 +190,7 @@ impl SameMusic {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::SameMusic(mode, SameMusicStage::ReadingTags), non_cached_files_to_check.len(), 0);
@@ -223,10 +224,10 @@ impl SameMusic {
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
-            return WorkContinueStatus::Stop;
+            return ControlFlow::Break(());
         }
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "check_for_duplicate_tags", level = "debug")]
@@ -234,7 +235,7 @@ impl SameMusic {
         if self.music_entries.is_empty() {
             return;
         }
-        let mode = match self.get_params().check_type {
+        let mode = match self.params.check_type {
             CheckingMethod::AudioTags => SameMusicMode::AudioTags,
             CheckingMethod::AudioContent => SameMusicMode::AudioContent,
             _ => unreachable!("SameMusic only supports AudioTags and AudioContent"),
@@ -415,15 +416,15 @@ impl SameMusic {
     }
 
     #[fun_time(message = "check_for_duplicate_fingerprints", level = "debug")]
-    pub(crate) fn check_for_duplicate_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> WorkContinueStatus {
+    pub(crate) fn check_for_duplicate_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         if self.music_entries.is_empty() {
-            return WorkContinueStatus::Continue;
+            return ControlFlow::Continue(());
         }
 
         let grouped_files_to_check = self.split_fingerprints_to_check();
         let base_files_number = grouped_files_to_check.iter().map(|g| g.base_files.len()).sum::<usize>();
 
-        let mode = match self.get_params().check_type {
+        let mode = match self.params.check_type {
             CheckingMethod::AudioTags => SameMusicMode::AudioTags,
             CheckingMethod::AudioContent => SameMusicMode::AudioContent,
             _ => unreachable!("SameMusic only supports AudioTags and AudioContent"),
@@ -435,7 +436,7 @@ impl SameMusic {
             let GroupedFilesToCheck { base_files, files_to_compare } = group;
             let Some(temp_music_entries) = self.compare_fingerprints(stop_flag, progress_handler.items_counter(), base_files, &files_to_compare) else {
                 progress_handler.join_thread();
-                return WorkContinueStatus::Stop;
+                return ControlFlow::Break(());
             };
             duplicated_music_entries.extend(temp_music_entries);
         }
@@ -463,7 +464,7 @@ impl SameMusic {
         // Clear unused data
         self.music_entries.clear();
 
-        WorkContinueStatus::Continue
+        ControlFlow::Continue(())
     }
 
     #[fun_time(message = "check_music_item", level = "debug")]
