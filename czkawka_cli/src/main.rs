@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::thread;
@@ -12,7 +12,7 @@ use czkawka_core::common::image::register_image_decoding_hooks;
 use czkawka_core::common::logger::{filtering_messages, print_version_mode, setup_logger};
 use czkawka_core::common::progress_data::ProgressData;
 use czkawka_core::common::set_number_of_threads;
-use czkawka_core::common::tool_data::{CommonData, DeleteMethod};
+use czkawka_core::common::tool_data::CommonData;
 use czkawka_core::common::traits::{PrintResults, Search};
 use czkawka_core::tools::bad_extensions::{BadExtensions, BadExtensionsParameters};
 use czkawka_core::tools::bad_names::{BadNames, BadNamesParameters, NameIssues};
@@ -29,14 +29,13 @@ use czkawka_core::tools::similar_images::{SimilarImages, SimilarImagesParameters
 use czkawka_core::tools::similar_videos::{SimilarVideos, SimilarVideosParameters};
 use czkawka_core::tools::temporary::{Temporary, TemporaryParameters};
 use czkawka_core::tools::video_optimizer::{
-    HardwareEncoder, VideoCropFixParams, VideoCropParams, VideoCroppingMechanism, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters, VideoTranscodeFixParams,
-    VideoTranscodeParams,
+    HardwareEncoder, VideoCropFixParams, VideoCropParams, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters, VideoTranscodeFixParams, VideoTranscodeParams,
 };
 use log::{debug, error, info};
 
 use crate::commands::{
     Args, BadExtensionsArgs, BadNamesArgs, BiggestFilesArgs, BrokenFilesArgs, CommonCliItems, CompletionsArgs, DMethod, DiskUsageArgs, DuplicatesArgs, EmptyFilesArgs,
-    EmptyFoldersArgs, ExifRemoverArgs, InvalidSymlinksArgs, SDMethod, SameMusicArgs, SimilarImagesArgs, SimilarVideosArgs, TemporaryArgs, VideoOptimizerArgs, validate_file_sizes,
+    EmptyFoldersArgs, ExifRemoverArgs, InvalidSymlinksArgs, SameMusicArgs, SimilarImagesArgs, SimilarVideosArgs, TemporaryArgs, VideoOptimizerArgs, VideoOptimizerMode,
 };
 use crate::progress::connect_progress;
 
@@ -80,7 +79,7 @@ fn main() {
 
     let calculate_thread = thread::Builder::new()
         .stack_size(DEFAULT_THREAD_SIZE)
-        .spawn(move || match command {
+        .spawn(move || match &command {
             Commands::Duplicates(duplicates_args) => duplicates(duplicates_args, &stop_flag, &progress_sender),
             Commands::EmptyFolders(empty_folders_args) => empty_folders(empty_folders_args, &stop_flag, &progress_sender),
             Commands::BiggestFiles(biggest_files_args) => biggest_files(biggest_files_args, &stop_flag, &progress_sender),
@@ -124,612 +123,348 @@ fn main() {
     std::process::exit(0);
 }
 
-fn duplicates(duplicates: DuplicatesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let DuplicatesArgs {
-        common_cli_items,
-        reference_directories,
-        minimal_file_size,
-        maximal_file_size,
-        minimal_cached_file_size,
-        search_method,
-        delete_method,
-        hash_type,
-        allow_hard_links,
-        case_sensitive_name_comparison,
-        minimal_prehash_cache_file_size,
-        use_prehash_cache,
-    } = duplicates;
-
-    validate_file_sizes(minimal_file_size, maximal_file_size);
-
+fn duplicates(args: &DuplicatesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = DuplicateFinderParameters::new(
-        search_method,
-        hash_type,
-        use_prehash_cache,
-        minimal_cached_file_size,
-        minimal_prehash_cache_file_size,
-        case_sensitive_name_comparison.case_sensitive_name_comparison,
+        args.search_method,
+        args.hash_type,
+        args.use_prehash_cache,
+        args.minimal_cached_file_size,
+        args.minimal_prehash_cache_file_size,
+        args.case_sensitive_name_comparison,
     );
     let mut tool = DuplicateFinder::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, Some(reference_directories.reference_directories.as_ref()));
-    tool.set_minimal_file_size(minimal_file_size);
-    tool.set_maximal_file_size(maximal_file_size);
-    tool.set_hide_hard_links(!allow_hard_links.allow_hard_links);
-    set_advanced_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    args.file_size.apply(&mut tool);
+    tool.set_hide_hard_links(!args.allow_hard_links.allow_hard_links);
+    set_delete(&mut tool, args.delete_method);
+    run(
+        tool,
+        &args.common_cli_items,
+        &args.reference_directories.reference_directories,
+        stop_flag,
+        progress_sender,
+        |_| {},
+    )
 }
 
-fn empty_folders(empty_folders: EmptyFoldersArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let EmptyFoldersArgs { common_cli_items, delete_method } = empty_folders;
-
+fn empty_folders(args: &EmptyFoldersArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let mut tool = EmptyFolder::new();
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn biggest_files(biggest_files: BiggestFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let BiggestFilesArgs {
-        common_cli_items,
-        number_of_files,
-        delete_method,
-        smallest_mode,
-    } = biggest_files;
-
-    let big_files_mode = if smallest_mode { SearchMode::SmallestFiles } else { SearchMode::BiggestFiles };
-    let params = BigFileParameters::new(number_of_files, big_files_mode);
-    let mut tool = BigFile::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+fn biggest_files(args: &BiggestFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let search_mode = if args.smallest_mode { SearchMode::SmallestFiles } else { SearchMode::BiggestFiles };
+    let mut tool = BigFile::new(BigFileParameters::new(args.number_of_files, search_mode));
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn disk_usage(disk_usage: DiskUsageArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let DiskUsageArgs {
-        common_cli_items,
-        depth,
-        top,
-        detect_by_content,
-        ignore_excluded_items,
-        ignore_excluded_directories,
-    } = disk_usage;
-
+fn disk_usage(args: &DiskUsageArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = DiskUsageParameters {
-        report_depth: depth.max(1),
-        report_entries_per_directory: top,
-        ignore_excluded_items,
-        ignore_excluded_directories,
-        ..DiskUsageParameters::new(detect_by_content.into())
+        report_depth: args.depth.max(1),
+        report_entries_per_directory: args.top,
+        ignore_excluded_items: args.ignore_excluded_items,
+        ignore_excluded_directories: args.ignore_excluded_directories,
+        ..DiskUsageParameters::new(args.detect_by_content.into())
     };
-    let mut tool = DiskUsage::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    run(DiskUsage::new(params), &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn empty_files(empty_files: EmptyFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let EmptyFilesArgs {
-        common_cli_items,
-        delete_method,
-        zero_byte_content,
-        non_printable_content,
-    } = empty_files;
-
+fn empty_files(args: &EmptyFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = EmptyFilesParameters {
-        search_zero_byte_content_files: zero_byte_content || non_printable_content,
-        search_non_printable_content_files: non_printable_content,
+        search_zero_byte_content_files: args.zero_byte_content || args.non_printable_content,
+        search_non_printable_content_files: args.non_printable_content,
     };
     let mut tool = EmptyFiles::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn temporary(temporary: TemporaryArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let TemporaryArgs {
-        common_cli_items,
-        delete_method,
-        extensions,
-    } = temporary;
-
-    let params = if extensions.is_empty() {
+fn temporary(args: &TemporaryArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let params = if args.extensions.is_empty() {
         TemporaryParameters::default()
     } else {
-        TemporaryParameters { extensions }
+        TemporaryParameters {
+            extensions: args.extensions.clone(),
+        }
     };
     let mut tool = Temporary::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn similar_images(similar_images: SimilarImagesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let SimilarImagesArgs {
-        common_cli_items,
-        reference_directories,
-        minimal_file_size,
-        maximal_file_size,
-        max_difference,
-        hash_alg,
-        image_filter,
-        hash_size,
-        geometric_invariance,
-        delete_method,
-        allow_hard_links,
-        ignore_same_size,
-        ignore_same_resolution,
-    } = similar_images;
-
-    validate_file_sizes(minimal_file_size, maximal_file_size);
-
+fn similar_images(args: &SimilarImagesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = SimilarImagesParameters::new(
-        max_difference,
-        hash_size,
-        hash_alg,
-        image_filter,
-        ignore_same_size.ignore_same_size,
-        ignore_same_resolution.ignore_same_resolution,
-        geometric_invariance,
+        args.max_difference,
+        args.hash_size,
+        args.hash_alg,
+        args.image_filter,
+        args.ignore_same_size.ignore_same_size,
+        args.ignore_same_resolution.ignore_same_resolution,
+        args.geometric_invariance,
     );
     let mut tool = SimilarImages::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, Some(reference_directories.reference_directories.as_ref()));
-    tool.set_minimal_file_size(minimal_file_size);
-    tool.set_maximal_file_size(maximal_file_size);
-    tool.set_hide_hard_links(!allow_hard_links.allow_hard_links);
-    set_advanced_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    args.file_size.apply(&mut tool);
+    tool.set_hide_hard_links(!args.allow_hard_links.allow_hard_links);
+    set_delete(&mut tool, args.delete_method);
+    run(
+        tool,
+        &args.common_cli_items,
+        &args.reference_directories.reference_directories,
+        stop_flag,
+        progress_sender,
+        |_| {},
+    )
 }
 
-fn same_music(same_music: SameMusicArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let SameMusicArgs {
-        common_cli_items,
-        reference_directories,
-        delete_method,
-        minimal_file_size,
-        maximal_file_size,
-        music_similarity,
-        minimum_segment_duration,
-        maximum_difference,
-        search_method,
-        approximate_comparison,
-        compare_fingerprints_only_with_similar_titles,
-    } = same_music;
-
-    validate_file_sizes(minimal_file_size, maximal_file_size);
-
+fn same_music(args: &SameMusicArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = SameMusicParameters::new(
-        music_similarity,
-        approximate_comparison,
-        search_method,
-        minimum_segment_duration,
-        maximum_difference,
-        compare_fingerprints_only_with_similar_titles,
+        args.music_similarity,
+        args.approximate_comparison,
+        args.search_method,
+        args.minimum_segment_duration,
+        args.maximum_difference,
+        args.compare_fingerprints_only_with_similar_titles,
     );
     let mut tool = SameMusic::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, Some(reference_directories.reference_directories.as_ref()));
-    tool.set_minimal_file_size(minimal_file_size);
-    tool.set_maximal_file_size(maximal_file_size);
-    set_advanced_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    args.file_size.apply(&mut tool);
+    set_delete(&mut tool, args.delete_method);
+    run(
+        tool,
+        &args.common_cli_items,
+        &args.reference_directories.reference_directories,
+        stop_flag,
+        progress_sender,
+        |_| {},
+    )
 }
 
-fn invalid_symlinks(invalid_symlinks: InvalidSymlinksArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let InvalidSymlinksArgs { common_cli_items, delete_method } = invalid_symlinks;
-
+fn invalid_symlinks(args: &InvalidSymlinksArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let mut tool = InvalidSymlinks::new();
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn broken_files(broken_files: BrokenFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let BrokenFilesArgs {
-        common_cli_items,
-        delete_method,
-        checked_types,
-    } = broken_files;
-
-    let mut checked_type = CheckedTypes::NONE;
-    for check_type in checked_types {
-        checked_type |= check_type;
-    }
-    let params = BrokenFilesParameters::new(checked_type);
-    let mut tool = BrokenFiles::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+fn broken_files(args: &BrokenFilesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let checked_types = args.checked_types.iter().fold(CheckedTypes::NONE, |acc, checked_type| acc | *checked_type);
+    let mut tool = BrokenFiles::new(BrokenFilesParameters::new(checked_types));
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |_| {})
 }
 
-fn similar_videos(similar_videos: SimilarVideosArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let SimilarVideosArgs {
-        reference_directories,
-        common_cli_items,
-        tolerance,
-        minimal_file_size,
-        maximal_file_size,
-        delete_method,
-        allow_hard_links,
-        ignore_same_size,
-        ignore_same_resolution,
-        skip_forward_amount,
-        crop_detect,
-        window_count,
-        duration_tolerance_pct,
-        min_matching_windows,
-        subclip_min_match,
-        scan_duration,
-        generate_thumbnails,
-        thumbnail_video_percentage_from_start,
-        generate_thumbnail_grid,
-        thumbnail_grid_tiles_per_side,
-        check_audio_content,
-        audio_similarity_percent,
-        audio_maximum_difference,
-        audio_length_ratio,
-        audio_min_duration_seconds,
-    } = similar_videos;
-
-    validate_file_sizes(minimal_file_size, maximal_file_size);
-
+fn similar_videos(args: &SimilarVideosArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
     let params = SimilarVideosParameters::new(
-        tolerance,
-        ignore_same_size.ignore_same_size,
-        ignore_same_resolution.ignore_same_resolution,
-        skip_forward_amount,
-        scan_duration,
-        crop_detect,
-        window_count,
-        duration_tolerance_pct,
-        min_matching_windows,
-        subclip_min_match,
-        generate_thumbnails,
-        thumbnail_video_percentage_from_start,
-        generate_thumbnail_grid,
-        thumbnail_grid_tiles_per_side,
-        check_audio_content,
-        audio_similarity_percent,
-        audio_maximum_difference,
-        audio_length_ratio,
-        audio_min_duration_seconds,
+        args.tolerance,
+        args.ignore_same_size.ignore_same_size,
+        args.ignore_same_resolution.ignore_same_resolution,
+        args.skip_forward_amount,
+        args.scan_duration,
+        args.crop_detect,
+        args.window_count,
+        args.duration_tolerance_pct,
+        args.min_matching_windows,
+        args.subclip_min_match,
+        args.generate_thumbnails,
+        args.thumbnail_video_percentage_from_start,
+        args.generate_thumbnail_grid,
+        args.thumbnail_grid_tiles_per_side,
+        args.check_audio_content,
+        args.audio_similarity_percent,
+        args.audio_maximum_difference,
+        args.audio_length_ratio,
+        args.audio_min_duration_seconds,
     );
     let mut tool = SimilarVideos::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, Some(reference_directories.reference_directories.as_ref()));
-    tool.set_minimal_file_size(minimal_file_size);
-    tool.set_maximal_file_size(maximal_file_size);
-    tool.set_hide_hard_links(!allow_hard_links.allow_hard_links);
-    set_advanced_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    args.file_size.apply(&mut tool);
+    tool.set_hide_hard_links(!args.allow_hard_links.allow_hard_links);
+    set_delete(&mut tool, args.delete_method);
+    run(
+        tool,
+        &args.common_cli_items,
+        &args.reference_directories.reference_directories,
+        stop_flag,
+        progress_sender,
+        |_| {},
+    )
 }
 
-fn bad_extensions(bad_extensions: BadExtensionsArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let BadExtensionsArgs { common_cli_items, fix_extensions } = bad_extensions;
-
-    let params = BadExtensionsParameters::new();
-    let mut tool = BadExtensions::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    if fix_extensions {
-        tool.fix_bad_extensions(stop_flag);
-    }
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+fn bad_extensions(args: &BadExtensionsArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let tool = BadExtensions::new(BadExtensionsParameters::new());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |tool| {
+        if args.fix_extensions {
+            tool.fix_bad_extensions(stop_flag);
+        }
+    })
 }
 
-fn bad_names(bad_names: BadNamesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let BadNamesArgs {
-        common_cli_items,
-        delete_method,
-        uppercase_extension,
-        emoji_used,
-        space_at_start_or_end,
-        non_ascii_graphical,
-        restricted_charset,
-        remove_duplicated_non_alphanumeric,
-        fix_names,
-    } = bad_names;
-
-    let restricted_charset_allowed = restricted_charset.and_then(|s| {
+fn bad_names(args: &BadNamesArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let restricted_charset_allowed = args.restricted_charset.as_deref().and_then(|s| {
         let mut items: Vec<_> = s.chars().collect();
         items.sort_unstable();
         items.dedup();
         if items.is_empty() { None } else { Some(items) }
     });
-
     let name_issues = NameIssues {
-        uppercase_extension,
-        emoji_used,
-        space_at_start_or_end,
-        non_ascii_graphical,
+        uppercase_extension: args.uppercase_extension,
+        emoji_used: args.emoji_used,
+        space_at_start_or_end: args.space_at_start_or_end,
+        non_ascii_graphical: args.non_ascii_graphical,
         restricted_charset_allowed,
-        remove_duplicated_non_alphanumeric,
+        remove_duplicated_non_alphanumeric: args.remove_duplicated_non_alphanumeric,
     };
-
-    let params = BadNamesParameters::new(name_issues);
-    let mut tool = BadNames::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
-    set_simple_delete(&mut tool, delete_method);
-
-    tool.search(stop_flag, Some(progress_sender));
-
-    if fix_names {
-        tool.fix_bad_names(stop_flag);
-    }
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    let mut tool = BadNames::new(BadNamesParameters::new(name_issues));
+    set_delete(&mut tool, args.delete_method.into());
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |tool| {
+        if args.fix_names {
+            tool.fix_bad_names(stop_flag);
+        }
+    })
 }
 
-fn video_optimizer(video_optimizer: VideoOptimizerArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    use crate::commands::{CropArgs, TranscodeArgs, VideoOptimizerMode as CliVideoOptimizerMode};
-
-    let VideoOptimizerArgs { common_cli_items, mode } = video_optimizer;
-
-    match mode {
-        CliVideoOptimizerMode::Transcode(transcode_args) => {
-            let TranscodeArgs {
-                excluded_codecs,
-                generate_thumbnails,
-                thumbnail_percentage,
-                thumbnail_grid,
-                fix_videos,
-                target_codec,
-                quality,
-                fail_if_not_smaller,
-                overwrite_original,
-                max_width,
-                max_height,
-                max_fps,
-                thumbnail_grid_tiles_per_side,
-                noise_reduction,
-                noise_reduction_strength,
-                custom_ffmpeg_command,
-            } = transcode_args;
-
-            let excluded_codecs_vec = excluded_codecs.map_or_else(
-                || vec!["hevc".to_string(), "h265".to_string(), "av1".to_string(), "vp9".to_string()],
+fn video_optimizer(args: &VideoOptimizerArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    match &args.mode {
+        VideoOptimizerMode::Transcode(transcode) => {
+            let excluded_codecs = transcode.excluded_codecs.as_deref().map_or_else(
+                || ["hevc", "h265", "av1", "vp9"].map(String::from).to_vec(),
                 |s| s.split(',').map(|c| c.trim().to_string()).collect(),
             );
-
+            let thumbnails = transcode.thumbnails;
             let params = VideoOptimizerParameters::VideoTranscode(VideoTranscodeParams::new(
-                excluded_codecs_vec,
-                generate_thumbnails,
-                thumbnail_percentage,
-                thumbnail_grid,
-                thumbnail_grid_tiles_per_side,
+                excluded_codecs,
+                thumbnails.generate_thumbnails,
+                thumbnails.thumbnail_percentage,
+                thumbnails.thumbnail_grid,
+                thumbnails.thumbnail_grid_tiles_per_side,
             ));
-
-            let mut tool = VideoOptimizer::new(params);
-            set_common_settings(&mut tool, &common_cli_items, None);
-            tool.search(stop_flag, Some(progress_sender));
-
-            if fix_videos {
-                let fix_params = VideoOptimizerFixParams::VideoTranscode(VideoTranscodeFixParams {
-                    codec: target_codec,
-                    quality,
-                    fail_if_not_smaller,
-                    overwrite_original,
-                    max_dimensions: max_width.zip(max_height),
-                    max_fps,
-                    noise_reduction,
-                    noise_reduction_strength,
-                    custom_ffmpeg_command,
-                    hardware_encoder: HardwareEncoder::None, // TODO  - missing hardware encoder
-                });
-                tool.fix_files(stop_flag, fix_params);
-            }
-
-            save_and_write_results_to_writer(&tool, &common_cli_items)
+            run(VideoOptimizer::new(params), &args.common_cli_items, &[], stop_flag, progress_sender, |tool| {
+                if transcode.fix_videos {
+                    let fix_params = VideoOptimizerFixParams::VideoTranscode(VideoTranscodeFixParams {
+                        codec: transcode.target_codec,
+                        quality: transcode.quality,
+                        fail_if_not_smaller: transcode.fail_if_not_smaller,
+                        overwrite_original: transcode.overwrite_original,
+                        max_dimensions: transcode.max_width.zip(transcode.max_height),
+                        max_fps: transcode.max_fps,
+                        noise_reduction: transcode.noise_reduction.clone(),
+                        noise_reduction_strength: transcode.noise_reduction_strength,
+                        custom_ffmpeg_command: transcode.custom_ffmpeg_command.clone(),
+                        hardware_encoder: HardwareEncoder::None, // TODO  - missing hardware encoder
+                    });
+                    tool.fix_files(stop_flag, fix_params);
+                }
+            })
         }
-        CliVideoOptimizerMode::Crop(crop_args) => {
-            let CropArgs {
-                crop_mechanism,
-                black_pixel_threshold,
-                black_bar_percentage,
-                max_samples,
-                min_crop_size,
-                generate_thumbnails,
-                thumbnail_percentage,
-                thumbnail_grid,
-                thumbnail_grid_tiles_per_side,
-                fix_videos,
-                overwrite_original,
-                target_codec,
-                quality,
-            } = crop_args;
-
-            #[expect(clippy::match_same_arms)]
-            let crop_mech = match crop_mechanism.as_str() {
-                "blackbars" => VideoCroppingMechanism::BlackBars,
-                "staticcontent" => VideoCroppingMechanism::StaticContent,
-                _ => VideoCroppingMechanism::BlackBars,
-            };
-
+        VideoOptimizerMode::Crop(crop) => {
+            let thumbnails = crop.thumbnails;
             let params = VideoOptimizerParameters::VideoCrop(VideoCropParams::with_custom_params(
-                crop_mech,
-                black_pixel_threshold,
-                black_bar_percentage,
-                max_samples,
-                min_crop_size,
-                generate_thumbnails,
-                thumbnail_percentage,
-                thumbnail_grid,
-                thumbnail_grid_tiles_per_side,
+                crop.crop_mechanism,
+                crop.black_pixel_threshold,
+                crop.black_bar_percentage,
+                crop.max_samples,
+                crop.min_crop_size,
+                thumbnails.generate_thumbnails,
+                thumbnails.thumbnail_percentage,
+                thumbnails.thumbnail_grid,
+                thumbnails.thumbnail_grid_tiles_per_side,
             ));
-
-            let mut tool = VideoOptimizer::new(params);
-            set_common_settings(&mut tool, &common_cli_items, None);
-            tool.search(stop_flag, Some(progress_sender));
-
-            if fix_videos {
-                let fix_params = VideoOptimizerFixParams::VideoCrop(VideoCropFixParams {
-                    overwrite_original,
-                    target_codec,
-                    quality,
-                    crop_mechanism: crop_mech,
-                });
-                tool.fix_files(stop_flag, fix_params);
-            }
-
-            save_and_write_results_to_writer(&tool, &common_cli_items)
+            run(VideoOptimizer::new(params), &args.common_cli_items, &[], stop_flag, progress_sender, |tool| {
+                if crop.fix_videos {
+                    let fix_params = VideoOptimizerFixParams::VideoCrop(VideoCropFixParams {
+                        overwrite_original: crop.overwrite_original,
+                        target_codec: crop.target_codec,
+                        quality: crop.quality,
+                        crop_mechanism: crop.crop_mechanism,
+                    });
+                    tool.fix_files(stop_flag, fix_params);
+                }
+            })
         }
     }
 }
 
-fn exif_remover(exif_remover: ExifRemoverArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    let ExifRemoverArgs {
-        common_cli_items,
-        ignored_tags,
-        fix_exif,
-        override_file,
-    } = exif_remover;
+fn exif_remover(args: &ExifRemoverArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let ignored_tags = args
+        .ignored_tags
+        .as_deref()
+        .map(|s| s.split(',').map(|tag| tag.trim().to_string()).collect())
+        .unwrap_or_default();
+    let tool = ExifRemover::new(ExifRemoverParameters::new(ignored_tags));
+    run(tool, &args.common_cli_items, &[], stop_flag, progress_sender, |tool| {
+        if args.fix_exif {
+            tool.fix_files(
+                stop_flag,
+                ExifTagsFixerParams {
+                    override_file: args.override_file,
+                },
+            );
+        }
+    })
+}
 
-    let ignored_tags_vec = ignored_tags.map(|s| s.split(',').map(|tag| tag.trim().to_string()).collect()).unwrap_or_default();
-
-    let params = ExifRemoverParameters::new(ignored_tags_vec);
-    let mut tool = ExifRemover::new(params);
-
-    set_common_settings(&mut tool, &common_cli_items, None);
+/// Applies the settings shared by every tool, scans, runs the optional `fix` step and collects the output.
+fn run<T: Search + PrintResults>(
+    mut tool: T,
+    common: &CommonCliItems,
+    reference_directories: &[PathBuf],
+    stop_flag: &Arc<AtomicBool>,
+    progress_sender: &Sender<ProgressData>,
+    fix: impl FnOnce(&mut T),
+) -> CliOutput {
+    set_number_of_threads(common.thread_number);
+    tool.set_reference_paths(reference_directories.to_vec());
+    tool.set_included_paths([common.directories.as_slice(), reference_directories].concat());
+    tool.set_excluded_paths(common.excluded_directories.clone());
+    tool.set_excluded_items(common.excluded_items.clone());
+    tool.set_recursive_search(!common.not_recursive);
+    #[cfg(target_family = "unix")]
+    tool.set_exclude_other_filesystems(common.exclude_other_filesystems);
+    tool.set_allowed_extensions(common.allowed_extensions.clone());
+    tool.set_excluded_extensions(common.excluded_extensions.clone());
+    tool.set_use_cache(!common.disable_cache);
 
     tool.search(stop_flag, Some(progress_sender));
-
-    if fix_exif {
-        let fix_params = ExifTagsFixerParams { override_file };
-        tool.fix_files(stop_flag, fix_params);
-    }
-
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+    fix(&mut tool);
+    save_and_write_results_to_writer(&tool, common)
 }
 
-fn save_and_write_results_to_writer<T: CommonData + PrintResults>(component: &T, common_cli_items: &CommonCliItems) -> CliOutput {
-    if let Some(file_name) = common_cli_items.file_to_save.file_name()
-        && let Err(e) = component.print_results_to_file(file_name)
+fn save_and_write_results_to_writer<T: PrintResults>(tool: &T, common: &CommonCliItems) -> CliOutput {
+    if let Some(file_name) = common.file_to_save.as_deref().and_then(Path::to_str)
+        && let Err(e) = tool.print_results_to_file(file_name)
     {
         error!("Failed to save results to file {e}");
     }
-    if let Some(file_name) = common_cli_items.json_compact_file_to_save.file_name()
-        && let Err(e) = component.save_results_to_file_as_json(file_name, false)
+    if let Some(file_name) = common.compact_file_to_save.as_deref().and_then(Path::to_str)
+        && let Err(e) = tool.save_results_to_file_as_json(file_name, false)
     {
         error!("Failed to save compact json results to file {e}");
     }
-    if let Some(file_name) = common_cli_items.json_pretty_file_to_save.file_name()
-        && let Err(e) = component.save_results_to_file_as_json(file_name, true)
+    if let Some(file_name) = common.pretty_file_to_save.as_deref().and_then(Path::to_str)
+        && let Err(e) = tool.save_results_to_file_as_json(file_name, true)
     {
         error!("Failed to save pretty json results to file {e}");
     }
 
-    let mut buf_writer = std::io::BufWriter::new(Vec::new());
-    if !common_cli_items.do_not_print.do_not_print_results {
-        let _ = component.write_results(&mut buf_writer).map_err(|e| {
-            error!("Failed to print results to output: {e}");
-        });
-    }
-
-    if !common_cli_items.do_not_print.do_not_print_messages {
-        let _ = component.get_text_messages().print_messages_to_writer(&mut buf_writer).map_err(|e| {
-            error!("Failed to print results to output: {e}");
-        });
-    }
-
-    let mut cli_output = CliOutput {
-        found_any_files: component.found_any_items(),
-        ignored_error_code_on_found: common_cli_items.ignore_error_code_on_found,
-        output: String::new(),
-    };
-
-    if let Ok(file_vec) = buf_writer.into_inner()
-        && let Ok(output) = String::from_utf8(file_vec)
+    let mut output = Vec::new();
+    if !common.do_not_print_results
+        && let Err(e) = tool.write_results(&mut output)
     {
-        cli_output.output = output;
+        error!("Failed to print results to output: {e}");
+    }
+    if !common.do_not_print_messages
+        && let Err(e) = tool.get_text_messages().print_messages_to_writer(&mut output)
+    {
+        error!("Failed to print messages to output: {e}");
     }
 
-    cli_output
-}
-
-fn set_simple_delete<T>(component: &mut T, s_delete: SDMethod)
-where
-    T: CommonData,
-{
-    if s_delete.delete_files {
-        component.set_delete_method(DeleteMethod::Delete);
+    CliOutput {
+        found_any_files: tool.found_any_items(),
+        ignored_error_code_on_found: common.ignore_error_code_on_found,
+        output: String::from_utf8_lossy(&output).into_owned(),
     }
-    component.set_dry_run(s_delete.dry_run);
-    component.set_move_to_trash(s_delete.move_to_trash);
 }
 
-fn set_advanced_delete<T>(component: &mut T, a_delete: DMethod)
-where
-    T: CommonData,
-{
-    component.set_delete_method(a_delete.delete_method);
-    component.set_dry_run(a_delete.dry_run);
-    component.set_move_to_trash(a_delete.move_to_trash);
-}
-
-fn set_common_settings<T>(component: &mut T, common_cli_items: &CommonCliItems, reference_directories: Option<&Vec<PathBuf>>)
-where
-    T: CommonData,
-{
-    set_number_of_threads(common_cli_items.thread_number);
-
-    let mut included_directories = common_cli_items.directories.clone();
-    if let Some(reference_directories) = reference_directories {
-        included_directories.extend_from_slice(reference_directories);
-        component.set_reference_paths(reference_directories.clone());
-    }
-
-    component.set_included_paths(included_directories);
-    component.set_excluded_paths(common_cli_items.excluded_directories.clone());
-    component.set_excluded_items(common_cli_items.excluded_items.clone());
-    component.set_recursive_search(!common_cli_items.not_recursive);
-    #[cfg(target_family = "unix")]
-    component.set_exclude_other_filesystems(common_cli_items.exclude_other_filesystems);
-    component.set_allowed_extensions(common_cli_items.allowed_extensions.clone());
-    component.set_excluded_extensions(common_cli_items.excluded_extensions.clone());
-    component.set_use_cache(!common_cli_items.disable_cache);
+fn set_delete<T: CommonData>(tool: &mut T, delete: DMethod) {
+    tool.set_delete_method(delete.delete_method);
+    tool.set_dry_run(delete.flags.dry_run);
+    tool.set_move_to_trash(delete.flags.move_to_trash);
 }

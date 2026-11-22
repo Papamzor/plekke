@@ -87,26 +87,21 @@ variants:
 
 ## Tool Dispatcher Pattern
 
-Every one of the 14 dispatch functions follows the same structure:
+Every dispatch function builds its tool and hands it to the shared `run` helper:
 
 ```rust
-fn tool_name(args: ToolArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
-    // 1. Destructure args
-    // 2. Build tool-specific parameter struct
-    let mut tool = ToolType::new(params);
-    // 3. Apply common settings (paths, extensions, cache, threads)
-    set_common_settings(&mut tool, &common_cli_items, reference_directories);
-    // 4. Apply tool-specific settings (file sizes, delete method, etc.)
-    // 5. Run scan
-    tool.search(stop_flag, Some(progress_sender));
-    // 6. Optionally run fix (rename/delete/etc.)
-    // 7. Collect and return output
-    save_and_write_results_to_writer(&tool, &common_cli_items)
+fn tool_name(args: &ToolArgs, stop_flag: &Arc<AtomicBool>, progress_sender: &Sender<ProgressData>) -> CliOutput {
+    let mut tool = ToolType::new(ToolParameters::new(args.some_field, ...));
+    args.file_size.apply(&mut tool);                 // FileSizeArgs tools only
+    set_delete(&mut tool, args.delete_method.into()); // DMethod, or SDMethod via `.into()`
+    run(tool, &args.common_cli_items, &reference_dirs_or_empty, stop_flag, progress_sender, |tool| {
+        // optional fix step (rename/remove EXIF/transcode), `|_| {}` when none
+    })
 }
 ```
 
-`set_common_settings` applies paths, recursion, extensions, cache flags, and
-thread count via the `CommonData` bound.
+`run` applies the `CommonCliItems` settings (threads, paths, extensions, cache),
+scans, runs the fix closure and returns `save_and_write_results_to_writer`.
 
 ---
 

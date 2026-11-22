@@ -1,36 +1,54 @@
+use std::num::ParseFloatError;
+use std::ops::{BitOr, RangeInclusive};
+use std::str::FromStr;
+
+use clap::builder::RangedI64ValueParser;
 use czkawka_core::common::model::{CheckingMethod, HashType};
 use czkawka_core::common::tool_data::DeleteMethod;
 use czkawka_core::re_exported::{FilterType, HashAlg};
 use czkawka_core::tools::broken_files::CheckedTypes;
 use czkawka_core::tools::same_music::MusicSimilarity;
 use czkawka_core::tools::similar_images::GeometricInvariance;
-use czkawka_core::tools::similar_videos::{
-    ALLOWED_AUDIO_LENGTH_RATIO, ALLOWED_AUDIO_SIMILARITY_PERCENT, ALLOWED_DURATION_TOLERANCE_PCT, ALLOWED_MATCH_FRACTION, ALLOWED_SKIP_FORWARD_AMOUNT, ALLOWED_VID_HASH_DURATION,
-    ALLOWED_WINDOW_COUNT,
-};
-use czkawka_core::tools::video_optimizer::{NoiseReductionMethod, VideoCodec};
+use czkawka_core::tools::video_optimizer::{VideoCodec, VideoCroppingMechanism};
 
 /// Values above this threshold are practically meaningless for audio segment matching
 const MAX_SAME_MUSIC_DIFFERENCE: f64 = 10.0;
 
-fn parse_f64_finite(src: &str) -> Result<f64, String> {
-    let value = src.parse::<f64>().map_err(|e| e.to_string())?;
-    if !value.is_finite() {
-        return Err(format!("Value '{src}' is not finite"));
+const MUSIC_SIMILARITY_NAMES: [(&str, MusicSimilarity); 6] = [
+    ("tracktitle", MusicSimilarity::TRACK_TITLE),
+    ("trackartist", MusicSimilarity::TRACK_ARTIST),
+    ("year", MusicSimilarity::YEAR),
+    ("bitrate", MusicSimilarity::BITRATE),
+    ("genre", MusicSimilarity::GENRE),
+    ("length", MusicSimilarity::LENGTH),
+];
+
+fn parse_finite<T: FromStr<Err = ParseFloatError> + Into<f64> + Copy>(src: &str) -> Result<T, String> {
+    let value: T = src.parse().map_err(|e: ParseFloatError| e.to_string())?;
+    if value.into().is_finite() {
+        Ok(value)
+    } else {
+        Err(format!("Value '{src}' is not finite"))
     }
-    Ok(value)
 }
 
-fn parse_f32_finite(src: &str) -> Result<f32, String> {
-    let value = src.parse::<f32>().map_err(|e| e.to_string())?;
-    if !value.is_finite() {
-        return Err(format!("Value '{src}' is not finite"));
+pub(crate) fn in_range(range: RangeInclusive<f64>, name: &'static str) -> impl Fn(&str) -> Result<f64, String> + Clone + Send + Sync + 'static {
+    move |src| {
+        let value = parse_finite(src)?;
+        if range.contains(&value) {
+            Ok(value)
+        } else {
+            Err(format!("{name} must be in range {range:?}"))
+        }
     }
-    Ok(value)
+}
+
+pub(crate) fn u32_in(range: RangeInclusive<u32>) -> RangedI64ValueParser<u32> {
+    clap::value_parser!(u32).range(i64::from(*range.start())..=i64::from(*range.end()))
 }
 
 pub(crate) fn parse_maximum_difference(src: &str) -> Result<f64, String> {
-    let maximum_difference = parse_f64_finite(src)?;
+    let maximum_difference = parse_finite(src)?;
     if maximum_difference <= 0.0 {
         Err("Maximum difference must be bigger than 0".to_string())
     } else if maximum_difference > MAX_SAME_MUSIC_DIFFERENCE {
@@ -41,7 +59,7 @@ pub(crate) fn parse_maximum_difference(src: &str) -> Result<f64, String> {
 }
 
 pub(crate) fn parse_minimum_segment_duration(src: &str) -> Result<f32, String> {
-    let minimum_segment_duration = parse_f32_finite(src)?;
+    let minimum_segment_duration = parse_finite(src)?;
     if minimum_segment_duration <= 0.0 {
         Err("Minimum segment duration must be bigger than 0".to_string())
     } else if minimum_segment_duration >= 3600.0 {
@@ -51,84 +69,9 @@ pub(crate) fn parse_minimum_segment_duration(src: &str) -> Result<f32, String> {
     }
 }
 
-pub(crate) fn parse_audio_similarity_percent(src: &str) -> Result<f64, String> {
-    let v = parse_f64_finite(src)?;
-    if ALLOWED_AUDIO_SIMILARITY_PERCENT.contains(&v) {
-        Ok(v)
-    } else {
-        Err(format!("Audio similarity percent must be in range {ALLOWED_AUDIO_SIMILARITY_PERCENT:?}"))
-    }
-}
-
 pub(crate) fn parse_audio_maximum_difference(src: &str) -> Result<f64, String> {
-    let v = parse_f64_finite(src)?;
+    let v = parse_finite(src)?;
     if v >= 0.0 { Ok(v) } else { Err("Audio maximum difference must be >= 0.0".to_string()) }
-}
-
-pub(crate) fn parse_audio_length_ratio(src: &str) -> Result<f64, String> {
-    let v = parse_f64_finite(src)?;
-    if ALLOWED_AUDIO_LENGTH_RATIO.contains(&v) {
-        Ok(v)
-    } else {
-        Err(format!("Audio length ratio must be in range {ALLOWED_AUDIO_LENGTH_RATIO:?}"))
-    }
-}
-
-pub(crate) fn parse_scan_duration(s: &str) -> Result<u32, String> {
-    match s.parse::<u32>() {
-        Ok(scan_duration) => {
-            if ALLOWED_VID_HASH_DURATION.contains(&scan_duration) {
-                Ok(scan_duration)
-            } else {
-                Err(format!("Scan duration must be one of: {ALLOWED_VID_HASH_DURATION:?}"))
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-pub(crate) fn parse_window_count(src: &str) -> Result<u32, String> {
-    match src.parse::<u32>() {
-        Ok(wc) => {
-            if ALLOWED_WINDOW_COUNT.contains(&wc) {
-                Ok(wc)
-            } else {
-                Err(format!("Window count must be one of: {ALLOWED_WINDOW_COUNT:?}"))
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-pub(crate) fn parse_duration_tolerance_pct(src: &str) -> Result<f64, String> {
-    let v = parse_f64_finite(src)?;
-    if ALLOWED_DURATION_TOLERANCE_PCT.contains(&v) {
-        Ok(v)
-    } else {
-        Err(format!("Duration tolerance must be in range {ALLOWED_DURATION_TOLERANCE_PCT:?}"))
-    }
-}
-
-pub(crate) fn parse_match_fraction(src: &str) -> Result<f64, String> {
-    let v = parse_f64_finite(src)?;
-    if ALLOWED_MATCH_FRACTION.contains(&v) {
-        Ok(v)
-    } else {
-        Err(format!("Match fraction must be in range {ALLOWED_MATCH_FRACTION:?}"))
-    }
-}
-
-pub(crate) fn parse_skip_forward_amount(src: &str) -> Result<u32, String> {
-    match src.parse::<u32>() {
-        Ok(skip_forward_amount) => {
-            if !ALLOWED_SKIP_FORWARD_AMOUNT.contains(&skip_forward_amount) {
-                Err(format!("Skip forward amount must be one of: {ALLOWED_SKIP_FORWARD_AMOUNT:?}"))
-            } else {
-                Ok(skip_forward_amount)
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
 }
 
 pub(crate) fn parse_hash_type(src: &str) -> Result<HashType, &'static str> {
@@ -137,19 +80,6 @@ pub(crate) fn parse_hash_type(src: &str) -> Result<HashType, &'static str> {
         "crc32" => Ok(HashType::Crc32),
         "xxh3" => Ok(HashType::Xxh3),
         _ => Err("Couldn't parse the hash type (allowed: BLAKE3, CRC32, XXH3)"),
-    }
-}
-
-pub(crate) fn parse_tolerance(src: &str) -> Result<i32, &'static str> {
-    match src.parse::<i32>() {
-        Ok(t) => {
-            if (0..=20).contains(&t) {
-                Ok(t)
-            } else {
-                Err("Tolerance should be in range <0,20>(Higher and lower similarity )")
-            }
-        }
-        _ => Err("Failed to parse tolerance as i32 value."),
     }
 }
 
@@ -195,22 +125,6 @@ pub(crate) fn parse_video_codec(src: &str) -> Result<VideoCodec, &'static str> {
     }
 }
 
-pub(crate) fn parse_max_samples(src: &str) -> Result<usize, String> {
-    match src.parse::<usize>() {
-        Ok(val) if (5..=1000).contains(&val) => Ok(val),
-        Ok(_) => Err("Maximum samples must be between 5 and 1000".to_string()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-pub(crate) fn parse_min_crop_size(src: &str) -> Result<u32, String> {
-    match src.parse::<u32>() {
-        Ok(val) if (1..=1000).contains(&val) => Ok(val),
-        Ok(_) => Err("Minimum crop size must be between 1 and 1000".to_string()),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 pub(crate) fn parse_delete_method(src: &str) -> Result<DeleteMethod, &'static str> {
     match src.to_ascii_lowercase().as_str() {
         "none" => Ok(DeleteMethod::None),
@@ -224,32 +138,6 @@ pub(crate) fn parse_delete_method(src: &str) -> Result<DeleteMethod, &'static st
         "ob" => Ok(DeleteMethod::OneBiggest),
         "os" => Ok(DeleteMethod::OneSmallest),
         _ => Err("Couldn't parse the delete method (allowed: AEN, AEO, ON, OO, HARD, AEB, AES, OB, OS)"),
-    }
-}
-
-pub(crate) fn parse_minimal_file_size(src: &str) -> Result<u64, String> {
-    match src.parse::<u64>() {
-        Ok(minimal_file_size) => {
-            if minimal_file_size > 0 {
-                Ok(minimal_file_size)
-            } else {
-                Err("Minimum file size must be at least 1 byte".to_string())
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-pub(crate) fn parse_maximal_file_size(src: &str) -> Result<u64, String> {
-    match src.parse::<u64>() {
-        Ok(maximal_file_size) => {
-            if maximal_file_size == 0 {
-                Err("Maximum file size must be at least 1 byte".to_string())
-            } else {
-                Ok(maximal_file_size)
-            }
-        }
-        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -304,49 +192,31 @@ pub(crate) fn parse_music_duplicate_type(src: &str) -> Result<MusicSimilarity, S
         return Ok(MusicSimilarity::NONE);
     }
 
-    let mut similarity: MusicSimilarity = MusicSimilarity::NONE;
-
-    let parts: Vec<String> = src.split(',').map(|e| e.to_lowercase().replace('_', "")).collect();
-
-    if parts.contains(&"tracktitle".into()) {
-        similarity |= MusicSimilarity::TRACK_TITLE;
-    }
-    if parts.contains(&"trackartist".into()) {
-        similarity |= MusicSimilarity::TRACK_ARTIST;
-    }
-    if parts.contains(&"year".into()) {
-        similarity |= MusicSimilarity::YEAR;
-    }
-    if parts.contains(&"bitrate".into()) {
-        similarity |= MusicSimilarity::BITRATE;
-    }
-    if parts.contains(&"genre".into()) {
-        similarity |= MusicSimilarity::GENRE;
-    }
-    if parts.contains(&"length".into()) {
-        similarity |= MusicSimilarity::LENGTH;
-    }
+    // Unknown names are ignored as long as at least one known name is present
+    let similarity = src
+        .split(',')
+        .map(|part| part.to_lowercase().replace('_', ""))
+        .filter_map(|part| MUSIC_SIMILARITY_NAMES.iter().find(|(name, _)| *name == part).map(|(_, flag)| *flag))
+        .fold(MusicSimilarity::NONE, BitOr::bitor);
 
     if similarity == MusicSimilarity::NONE {
         return Err("Couldn't parse the music search method (allowed: track_title,track_artist,year,bitrate,genre,length)".to_string());
     }
-
     Ok(similarity)
 }
 
-pub(crate) fn parse_crop_mechanism(src: &str) -> Result<String, String> {
+pub(crate) fn parse_crop_mechanism(src: &str) -> Result<VideoCroppingMechanism, String> {
     match src.to_lowercase().as_str() {
-        "blackbars" | "staticcontent" => Ok(src.to_lowercase()),
+        "blackbars" => Ok(VideoCroppingMechanism::BlackBars),
+        "staticcontent" => Ok(VideoCroppingMechanism::StaticContent),
         _ => Err("Invalid crop mechanism. Allowed values: blackbars, staticcontent".to_string()),
     }
 }
 
-pub(crate) fn parse_noise_reduction(src: &str) -> Result<NoiseReductionMethod, String> {
-    src.parse::<NoiseReductionMethod>()
-}
-
 #[cfg(test)]
 mod tests {
+    use czkawka_core::tools::similar_videos::{ALLOWED_DURATION_TOLERANCE_PCT, ALLOWED_MATCH_FRACTION};
+
     use super::*;
 
     #[test]
@@ -358,15 +228,32 @@ mod tests {
 
     #[test]
     fn test_parse_finite_float_rejects_nan_and_inf() {
+        let duration_tolerance = in_range(ALLOWED_DURATION_TOLERANCE_PCT, "Duration tolerance");
+        let match_fraction = in_range(ALLOWED_MATCH_FRACTION, "Match fraction");
         for value in ["NaN", "nan", "inf", "+inf", "-inf", "INF", "-INF"] {
             assert!(parse_maximum_difference(value).is_err(), "value {value:?} should be rejected");
             assert!(parse_audio_maximum_difference(value).is_err(), "value {value:?} should be rejected");
-            assert!(parse_duration_tolerance_pct(value).is_err(), "value {value:?} should be rejected");
-            assert!(parse_match_fraction(value).is_err(), "value {value:?} should be rejected");
+            assert!(parse_minimum_segment_duration(value).is_err(), "value {value:?} should be rejected");
+            assert!(duration_tolerance(value).is_err(), "value {value:?} should be rejected");
+            assert!(match_fraction(value).is_err(), "value {value:?} should be rejected");
         }
+    }
 
-        parse_minimum_segment_duration("-inf").unwrap_err();
-        parse_audio_similarity_percent("nan").unwrap_err();
-        parse_match_fraction("inf").unwrap_err();
+    #[test]
+    fn test_in_range() {
+        let match_fraction = in_range(ALLOWED_MATCH_FRACTION, "Match fraction");
+        assert_eq!(match_fraction("0.5"), Ok(0.5));
+        assert_eq!(match_fraction("1.5"), Err("Match fraction must be in range 0.0..=1.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_music_duplicate_type() {
+        assert_eq!(parse_music_duplicate_type(" "), Ok(MusicSimilarity::NONE));
+        assert_eq!(
+            parse_music_duplicate_type("Track_Title,unknown,YEAR,year"),
+            Ok(MusicSimilarity::TRACK_TITLE | MusicSimilarity::YEAR)
+        );
+        // Parts are not trimmed
+        parse_music_duplicate_type(" genre").unwrap_err();
     }
 }
