@@ -239,7 +239,7 @@ impl BrokenFiles {
     fn check_broken_bz2(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
         match File::open(&file_entry.path) {
             Ok(file) => {
-                let mut decoder = bzip2_rs::DecoderReader::new(file);
+                let mut decoder = bzip2::read::MultiBzDecoder::new(file);
                 let error = match std::io::copy(&mut decoder, &mut std::io::sink()) {
                     Err(e) => Some(normalize_error_string(&e.to_string())),
                     Ok(_) => None,

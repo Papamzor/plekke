@@ -1,3 +1,4 @@
+use std::hash::{BuildHasher, RandomState};
 use std::io::Error;
 use std::path::Path;
 use std::{fs, io};
@@ -102,7 +103,7 @@ pub fn make_hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Res
     let mut temp;
     let mut attempts = MAX_SYMLINK_HARDLINK_ATTEMPTS;
     loop {
-        temp = dst_dir.join(format!("{}.czkawka_tmp", rand::random::<u128>()));
+        temp = dst_dir.join(format!("{}.czkawka_tmp", RandomState::new().hash_one(attempts)));
         if !temp.exists() {
             break;
         }
@@ -159,7 +160,7 @@ pub fn make_file_symlink<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::
     let mut temp;
     let mut attempts = MAX_SYMLINK_HARDLINK_ATTEMPTS;
     loop {
-        temp = dst_dir.join(format!("{}.czkawka_tmp", rand::random::<u128>()));
+        temp = dst_dir.join(format!("{}.czkawka_tmp", RandomState::new().hash_one(attempts)));
         if !temp.exists() {
             break;
         }

@@ -460,16 +460,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bzip2-rs"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "beeb59e7e4c811ab37cc73680c798c7a5da77fc9989c62b09138e31ee740f735"
-dependencies = [
- "crc32fast",
- "tinyvec",
-]
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,7 +838,6 @@ dependencies = [
  "crossbeam-channel",
  "ctrlc",
  "czkawka_core",
- "humansize",
  "indicatif",
  "log",
 ]
@@ -860,7 +849,7 @@ dependencies = [
  "bincode",
  "bitflags",
  "blake3",
- "bzip2-rs",
+ "bzip2",
  "crc32fast",
  "criterion",
  "crossbeam-channel",
@@ -870,10 +859,8 @@ dependencies = [
  "fast_image_resize",
  "file-id",
  "file-rotate",
- "filetime",
  "flate2",
  "fun_time",
- "glibc_musl_version",
  "hamming-bitwise-fast",
  "handsome_logger",
  "humansize",
@@ -885,7 +872,6 @@ dependencies = [
  "imgalifier-heif",
  "indexmap",
  "infer",
- "itertools 0.15.0",
  "jxl-oxide",
  "little_exif",
  "lofty",
@@ -894,7 +880,6 @@ dependencies = [
  "lopdf",
  "lzma-rs",
  "mime_guess",
- "once_cell",
  "os_info",
  "quick-xml 0.42.0",
  "rand 0.10.3",
@@ -908,7 +893,6 @@ dependencies = [
  "serde_json",
  "sevenz-rust2",
  "similario_core",
- "static_assertions",
  "symphonia",
  "tar",
  "tempfile",
@@ -1440,12 +1424,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 
 [[package]]
-name = "glibc_musl_version"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b03526c417228f37a649e2697eb015f81c59817679bf01ac62445ce6a9b19ef"
-
-[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1580,7 +1558,6 @@ dependencies = [
  "log",
  "parking_lot",
  "rust-embed",
- "sys-locale",
  "thiserror 1.0.69",
  "unic-langid",
  "walkdir",
@@ -1828,15 +1805,6 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -3932,15 +3900,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "sys-locale"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
-dependencies = [
- "libc",
 ]
 
 [[package]]

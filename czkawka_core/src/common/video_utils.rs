@@ -181,7 +181,10 @@ pub fn generate_thumbnail(
     let thumbnail_path = thumbnails_dir.join(thumbnail_filename);
 
     if thumbnail_path.exists() {
-        let _ = filetime::set_file_mtime(&thumbnail_path, filetime::FileTime::now());
+        let _ = fs::File::options()
+            .write(true)
+            .open(&thumbnail_path)
+            .and_then(|f| f.set_modified(std::time::SystemTime::now()));
         return Ok(Some(thumbnail_path));
     }
 

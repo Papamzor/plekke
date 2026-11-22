@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-#[cfg(not(feature = "no_colors"))]
 use clap::builder::Styles;
-#[cfg(not(feature = "no_colors"))]
 use clap::builder::styling::AnsiColor;
 use czkawka_core::CZKAWKA_VERSION;
 use czkawka_core::common::model::{CheckingMethod, HashType};
@@ -28,7 +26,6 @@ use crate::parsers::{
     parse_video_codec, parse_window_count,
 };
 
-#[cfg(not(feature = "no_colors"))]
 pub const CLAP_STYLING: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().bold())
     .usage(AnsiColor::Green.on_default().bold())
@@ -38,22 +35,14 @@ pub const CLAP_STYLING: Styles = Styles::styled()
     .valid(AnsiColor::Green.on_default().bold())
     .invalid(AnsiColor::Yellow.on_default().bold());
 
-const LONG_VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "\ncommit: ",
-    env!("CZKAWKA_CLI_BUILD_COMMIT"),
-    "\ndate:   ",
-    env!("CZKAWKA_CLI_BUILD_DATE"),
-);
-
 #[derive(clap::Parser)]
 #[clap(
     name = "czkawka",
     help_template = HELP_TEMPLATE,
     version = CZKAWKA_VERSION,
-    long_version = LONG_VERSION,
+    long_version = czkawka_core::CZKAWKA_LONG_VERSION,
 )]
-#[cfg_attr(not(feature = "no_colors"), clap(styles = CLAP_STYLING))]
+#[clap(styles = CLAP_STYLING)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,

@@ -1,14 +1,14 @@
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::{env, fs};
 
 use directories_next::ProjectDirs;
 use log::{info, warn};
-use once_cell::sync::OnceCell;
 
 use crate::flc;
 
-static CONFIG_CACHE_PATH: OnceCell<Option<ConfigCachePath>> = OnceCell::new();
+static CONFIG_CACHE_PATH: OnceLock<Option<ConfigCachePath>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct ConfigCachePath {

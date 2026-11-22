@@ -548,8 +548,8 @@ impl SimilarVideos {
                 })
                 .flatten()
                 .partition_map(|res| match res {
-                    Ok(entry) => itertools::Either::Left(entry),
-                    Err(err) => itertools::Either::Right(err),
+                    Ok(entry) => rayon::iter::Either::Left(entry),
+                    Err(err) => rayon::iter::Either::Right(err),
                 });
 
             self.common_data.text_messages.errors.extend(errors);

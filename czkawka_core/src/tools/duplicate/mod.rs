@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
-use static_assertions::const_assert;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::common::model::{CheckingMethod, FileEntry, HashType};
@@ -222,7 +221,7 @@ impl DuplicateFinder {
 pub(crate) fn hash_calculation_limit(buffer: &mut [u8], file_entry: &DuplicateEntry, hash_type: HashType, limit: u64, size_counter: &Arc<AtomicU64>) -> Result<String, String> {
     // Reads up to `limit` bytes from the start and up to `limit` from the end into one hasher.
     // When the head and tail would overlap (size <= 2*limit) the whole file is read in a single pass.
-    const_assert!(PREHASHING_BUFFER_SIZE * 2 <= THREAD_BUFFER_SIZE as u64);
+    const _: () = assert!(PREHASHING_BUFFER_SIZE * 2 <= THREAD_BUFFER_SIZE as u64);
 
     let mut file_handler = match File::open(&file_entry.path) {
         Ok(t) => t,

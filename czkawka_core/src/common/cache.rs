@@ -12,7 +12,6 @@ use fun_time::fun_time;
 use humansize::{BINARY, format_size};
 use indexmap::IndexMap;
 use log::{debug, error};
-use once_cell::sync::Lazy;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +33,7 @@ pub(crate) const CACHE_VIDEO_OPTIMIZE_VERSION: u8 = 130;
 const MEMORY_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
 const CLEANING_TIMESTAMPS_FILE: &str = "cleaning_timestamps.json";
 
-static CACHE_CLEANING_INTERVAL_SECONDS: Lazy<u64> = Lazy::new(|| {
+static CACHE_CLEANING_INTERVAL_SECONDS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
     option_env!("CZKAWKA_CACHE_CLEANING_INTERVAL_SECONDS")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(7 * 24 * 60 * 60)

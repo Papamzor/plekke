@@ -65,28 +65,11 @@ pub fn setup_logger(disabled_terminal_printing: bool, app_name: &str, filtering_
 }
 
 pub fn filtering_messages(record: &Record) -> bool {
-    if let Some(module_path) = record.module_path() {
-        // Printing not supported modules
-        // if !["krokiet", "czkawka", "log_panics", "smithay_client_toolkit", "sctk_adwaita"]
-        //     .iter()
-        //     .any(|t| module_path.starts_with(t))
-        // {
-        //     println!("{:?}", module_path);
-        //     return true;
-        // } else {
-        //     return false;
-        // }
-
-        ["krokiet", "czkawka", "log_panics", "cedinia"].iter().any(|t| module_path.starts_with(t))
-    } else {
-        true
-    }
+    record
+        .module_path()
+        .is_none_or(|module_path| ["czkawka", "log_panics"].iter().any(|t| module_path.starts_with(t)))
 }
 
-#[allow(clippy::allow_attributes)]
-#[allow(unfulfilled_lint_expectations)] // Happens only on release build
-#[expect(clippy::vec_init_then_push)]
-#[expect(unused_mut)]
 pub fn format_version_string(app: &str) -> String {
     let rust_version = env!("RUST_VERSION_INTERNAL");
     let debug_release = if cfg!(debug_assertions) { "debug" } else { "release" };
@@ -94,8 +77,6 @@ pub fn format_version_string(app: &str) -> String {
     let processors = get_all_available_threads();
 
     let info = os_info::get();
-
-    let mut features: Vec<&str> = Vec::new();
 
     let mut app_cpu_version = "Baseline";
     let mut os_cpu_version = "Baseline";
@@ -131,38 +112,15 @@ pub fn format_version_string(app: &str) -> String {
         os_cpu_version = "x86-64-v4 (AVX-512)";
     }
 
-    let musl_or_glibc = if cfg!(target_os = "linux") {
-        let libc_versions_str = match glibc_musl_version::get_os_libc_versions() {
-            Ok(libc_versions) => {
-                let libc_versions_str = libc_versions.to_string();
-                match option_env!("CZKAWKA_LIBC_VERSIONS") {
-                    Some(env) if env == libc_versions_str => format!(" [build + runtime ({libc_versions_str})]"),
-                    Some(env) => format!(" [build ({env}), runtime ({libc_versions_str})]"),
-                    None => format!(" [build (unknown), runtime ({libc_versions_str})]"),
-                }
-            }
-            Err(e) => {
-                warn!("Cannot get libc version: {e}");
-                "".to_string()
-            }
-        };
-        format!(", libc {}{libc_versions_str}", option_env!("CZKAWKA_LIBC").unwrap_or("unknown(cross-compilation?)"))
-    } else {
-        "".to_string()
-    };
-
     let git_commit = env!("CZKAWKA_GIT_COMMIT_SHORT");
-    let official_build = if env!("CZKAWKA_OFFICIAL_BUILD") == "1" { "O" } else { "U" };
     let git_date = env!("CZKAWKA_GIT_COMMIT_DATE");
 
     format!(
-        "{app} version: {CZKAWKA_VERSION}({git_commit} {official_build} {git_date}), {debug_release} mode, rust {rust_version}, os {} {} ({} {}), {processors} cpu/threads, features({}): [{}], app cpu version: {app_cpu_version}, os cpu version: {os_cpu_version}{musl_or_glibc}",
+        "{app} version: {CZKAWKA_VERSION}({git_commit} {git_date}), {debug_release} mode, rust {rust_version}, os {} {} ({} {}), {processors} cpu/threads, app cpu version: {app_cpu_version}, os cpu version: {os_cpu_version}",
         info.os_type(),
         info.version(),
         env::consts::ARCH,
         info.bitness(),
-        features.len(),
-        features.join(", "),
     )
 }
 

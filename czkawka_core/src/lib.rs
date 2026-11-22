@@ -9,3 +9,10 @@ pub mod re_exported {
 }
 
 pub const CZKAWKA_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CZKAWKA_LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\ncommit: ",
+    env!("CZKAWKA_GIT_COMMIT_SHORT"),
+    "\ndate:   ",
+    env!("CZKAWKA_GIT_COMMIT_DATE")
+);
