@@ -1,47 +1,42 @@
-# Czkawka – Codebase Guide
+# czkawka (hard fork) - Codebase Guide
 
-## Language
+Hard fork of qarmin/czkawka. Upstream is irrelevant: never pull from it, never shape changes for it.
+Goal: `czkawka_core` as the scanning engine behind a Tauri desktop app styled with mwp-ui
+(`../mwp-ui/mwp-ui`). Old GTK/Slint frontends are deleted; delete freely when code only served them.
 
-All code, comments, commit messages, and documentation must be written in **English**.
+All code, comments, commit messages and docs are in **English**.
 
----
+## Workspace
 
-## AI-authored commits & merge/pull requests
+```
+czkawka_core/   # Scanning engine (library). Architecture: czkawka_core/AGENTS.md
+czkawka_cli/    # CLI frontend, also the quickest smoke test for core changes
+```
 
-Always, without exception: every commit created by an AI assistant must start its title (the
-first line of the commit message) with `[AI] `, e.g. `[AI] Fix crash when scanning empty
-directories`. If the commit message has a body, the body does not need the prefix again - the
-title alone marks it.
+Edition 2024, Rust >= 1.94.1 (stable MSVC toolchain on Windows).
 
-The same applies to any merge request (GitLab) or pull request (GitHub) opened by an AI
-assistant: both the title and the body/description must start with `[AI] `, e.g. title
-`[AI] Add duplicate detection for symlinked folders` and body starting with
-`[AI] This MR adds ...`. This must stay visible to reviewers at a glance in both GitLab and
-GitHub - never omit it, even for small or automatic changes.
+## Quality gate
 
----
+Before calling a task done:
 
-## Branches
+```
+cargo +nightly fmt        # .rustfmt.toml uses nightly-only import grouping
+cargo clippy --all-targets -- -D warnings
+cargo test -p czkawka_core
+cargo run --release -p czkawka_cli -- dup -d <some folder>   # smoke run, deletes nothing by default
+```
 
-Always start a new branch from the latest `origin/master` (`git fetch origin` first, then `git switch -c <name> origin/master`). Never stack a branch on top of another unmerged PR/MR branch: chains of dependent MRs are hard to manage and cause conflicts. If a change really depends on an unmerged one, say so and ask instead of building on top of it.
+## Output conventions
 
----
-
-## Changelog
-
-Never edit `Changelog.md` automatically. It is maintained by hand by the author; do not add, update or "complete" entries unless explicitly asked.
-
----
+User-facing sizes in metric (SI) units: kB, MB, GB. Dates as DD/MM/YYYY.
 
 ## Rust Style
 
-Applies to every Rust crate in the workspace (`czkawka_core`, `czkawka_cli`,
-`krokiet`, `cedinia`). Program-specific deviations or elaborations live in that program's own
-`AGENTS.md`.
+Applies to every Rust crate in the workspace. Crate-specific notes live in that crate's own `AGENTS.md`.
 
 **Formatting & lints**
 - Format with `cargo +nightly fmt`, then `cargo fmt` for stable compatibility
-  (`.rustfmt.toml`: `max_width = 120`, granular import grouping `group_imports = "StdExternalCrate"`).
+  (`.rustfmt.toml`: `max_width = 180`, granular import grouping `group_imports = "StdExternalCrate"`).
 - Code must compile without clippy warnings. Suppress a lint locally only with a comment
   explaining why.
 
@@ -49,9 +44,7 @@ Applies to every Rust crate in the workspace (`czkawka_core`, `czkawka_cli`,
 - Prefer `?`, `ok_or_else`, `map_err` over panic-based flows.
 - `unwrap()` only in tests.
 - `expect()` in production only when BOTH hold: there is no correct recovery path, and
-  continuing would likely hide a serious bug - always with a precise, actionable message. This
-  is visible throughout Krokiet/Cedinia callback code: a Slint weak reference is upgraded with
-  `expect()` because if the window is already gone there is nothing meaningful to do except crash.
+  continuing would likely hide a serious bug - always with a precise, actionable message.
 - Never silently swallow errors with `let _ = ...` unless the failure is genuinely irrelevant.
 - Model domain errors with explicit types (`thiserror`/enums), not raw strings.
 - Wrap I/O errors with context (e.g. file path) instead of letting std's bare "Permission
@@ -91,7 +84,7 @@ surface warrants more explanation than the rest of the workspace; see `czkawka_c
 
 **`unsafe`**
 Avoid whenever possible. Every `unsafe` block documents its invariants and why the safety
-requirements hold (see cedinia's `#[unsafe(no_mangle)] android_main`).
+requirements hold.
 
 **Files & logging**
 - Keep source files at or below 500 lines; split large files into modules.
@@ -123,253 +116,3 @@ checks, and a favorable cost model.
   packing and better cache density.
 - Wrap Criterion bench inputs/outputs in `std::hint::black_box(...)` to stop dead-code
   elimination from invalidating the measurement.
-
----
-
-## Project Goals
-
-Two properties are non-negotiable across every sub-project:
-
-1. **Performance first** – scanning and file operations must be fast. Parallelism via `rayon`,
-   efficient algorithms (e.g. perceptual hashing, blake3), and careful memory use are the norm.
-   Avoid unnecessary allocations or copies in hot paths.
-
-2. **Minimal non-Rust dependencies** – every additional C/C++ library (or any other non-Rust
-   language) makes cross-compilation harder, narrows the set of supported targets, and increases
-   build complexity for contributors. Prefer pure-Rust crates. If a native library is truly
-   necessary (e.g. a codec library), gate it behind an optional Cargo feature so the default
-   build stays fully Rust.
-
----
-
-## `just fix` – baseline quality gate
-
-**Mandatory: after finishing any coding task, run `just fix` and resolve everything it reports
-before considering the task done.** This applies always, without exception - not just before
-opening a merge request.
-
-Running `just fix` must pass before any merge request. It runs, in order:
-
-1. Repo-wide auto-fix of `—`/`–`/`―` dash characters back to plain `-` (`.rs`, `.slint`, `.md`,
-   `.ftl`; `AGENTS.md` and `justfile` themselves are excluded) – the enforcement behind the
-   "never use em/en dash" style rule above.
-2. `uv run ruff format --line-length 120` – Python code formatting.
-3. `uv run mypy misc --strict` – static type checking for all scripts in `misc/`.
-4. `bash misc/run_checks.sh` – project-specific checks:
-   - `delete_unused_krokiet_slint_imports.py` for krokiet and cedinia
-   - `find_unused_fluent_translations.py` for all four projects
-   - `find_unused_slint_translations.py` for krokiet and cedinia
-   - `find_unused_callbacks.py` for krokiet and cedinia
-   - `find_unused_settings_properties.py` for krokiet and cedinia
-5. `cargo +nightly fmt` – Rust formatting.
-6. `cargo clippy --fix --all-features --all-targets` – Rust linting (single pass).
-7. `cargo +nightly fmt` + `cargo fmt` again – re-format whatever clippy's fixes touched.
-
-For a clippy pass that also covers the `--no-default-features` build, run `just clip` separately
-(two passes: `--all-features` and `--no-default-features --features winit_software`).
-
-If `just fix` produces any output on stderr or exits non-zero the code is not ready for review.
-
----
-
-## Workspace Structure
-
-```
-czkawka/
-├── czkawka_core/   # Scanning logic – shared library used by all frontends
-├── czkawka_cli/    # Command-line interface
-├── krokiet/        # Primary desktop GUI – Slint-based
-├── cedinia/        # Android / mobile GUI – Slint-based
-└── misc/           # Scripts: AI translation, validation, benchmarks, CI helpers
-```
-
-Cargo workspace resolver v3, minimum Rust 1.94.1, edition 2024 throughout. The minimum Rust version tracks the latest `rustc` in Debian Sid (https://packages.debian.org/sid/rustc); raise `rust-version` and the CI toolchain when Sid moves ahead.
-
----
-
-## czkawka_core
-
-The shared scanning engine. Every frontend depends on it; it has no UI dependency.
-
-**Key modules:**
-- `common/` – `CommonToolData` (settings, stop-flag, progress sender), `DirTraversal`, cache,
-  extension filtering, path helpers, progress types.
-- `tools/` – One sub-module per scanning tool:
-  `duplicate`, `empty_folder`, `empty_files`, `big_file`, `similar_images`, `similar_videos`,
-  `same_music`, `broken_files`, `bad_extensions`, `bad_names`, `invalid_symlinks`, `temporary`,
-  `exif_remover`, `video_optimizer`.
-- `localizer_core.rs` – Fluent translation loader for Rust-side messages.
-
-Each tool implements the `CommonData` trait (shared settings access) and `PrintResults` (CSV/JSON
-export). The tool struct is constructed, configured, then its `find_*()` method is called in a
-worker thread. Progress is reported over a `crossbeam` channel; a stop `AtomicBool` is polled to
-support cancellation.
-
----
-
-## krokiet
-
-The primary desktop GUI. Built with [Slint](https://slint.dev/) (GPL-3.0). The UI is declared
-in `ui/*.slint`; Rust connects callbacks and drives the Slint model.
-
-**Build:** `slint_build` compiles `.slint` sources at build time; `slint::include_modules!()`
-exposes the generated types.
-
-**Entry point:** `src/main.rs`
-- Loads settings, creates `MainWindow`, wires up all callbacks, starts the event loop.
-
-**Callback pattern:**
-```rust
-let weak = app.as_weak();
-app.global::<Callabler>().on_some_action(move || {
-    let app = weak.upgrade().expect("MainWindow dropped while callback is still live");
-    // ...
-});
-```
-Each feature area lives in a dedicated `connect_*.rs` file (e.g. `connect_scan.rs`,
-`connect_compare.rs`, `connect_delete_button.rs`).
-
-**`SharedModels`** (`src/shared_models.rs`):
-An `Arc<Mutex<SharedModels>>` holds the last scan result and parameters of scan of each tool. It is passed to every
-`connect_*` function that needs to access or mutate scan state from a background thread.
-
-**Model layer:**
-- The Slint UI is driven by `ModelRc<VecModel<SingleMainListModel>>`.
-- `SingleMainListModel` carries `val_str: [string]` and `val_int: [int]` vectors – a flat,
-  index-based row representation.
-- Column indices for each tool are defined as constants in `src/common.rs`
-  (`StrDataSimilarImages`, `StrDataDuplicates`, …).
-
-**Translation:** `flk!("key")` / `flk!("key", var = value)` macros defined in
-`src/localizer_krokiet.rs`. Language files in `i18n/<lang-code>/krokiet.ftl`.
-
----
-
-## cedinia
-
-The Android (and secondary desktop) GUI. Architecture mirrors Krokiet but adapts to mobile
-constraints. Compiled as `cdylib` for Android (loaded via `android-activity`).
-
-**Entry points:**
-- Android: `#[unsafe(no_mangle)] fn android_main(android_app: AndroidApp)` in `src/lib.rs`
-- Desktop: `fn run_app()` in `src/app.rs`
-
-**Android-specific:**
-- File picker uses JNI to call into a Kotlin/Java helper embedded via `include_bytes!` (DEX).
-- Storage permissions requested at runtime; `AppState.storage_permission_granted` gates scanning.
-- System insets (`inset_top`, `inset_bottom`) plumbed through to Slint for edge-to-edge layout.
-- `android_logger` routes Rust log output to logcat.
-
-**Differences from Krokiet:**
-- Has `SimilarVideos` (audio-fingerprint matching only, via `rusty-chromaprint`), but not
-  `VideoOptimizer` - ffmpeg-based transcoding/crop-detection is not available on Android.
-- Touch-optimised UI (`cedinia/ui/`); momentum-scroll views, bottom sheets, FAB.
-- `flc!` macro (cedinia-specific) in `src/localizer_cedinia.rs`.
-- See `cedinia/AGENTS.md` ("Differences from krokiet") for the full comparison table.
-
-**Translation:** `flc!("key")` macro; language files in `cedinia/i18n/<lang-code>/cedinia.ftl`.
-
----
-
-## czkawka_cli
-
-Thin wrapper around `czkawka_core`. Uses `clap` (derive API) for argument parsing and `indicatif`
-for progress bars. No GUI code. Results printed via the tool's `PrintResults` trait.
-
----
-
-## misc/
-
-**Translation tooling** (`ai_translate/`):
-- `translate.py` – AI-powered batch translation into all supported languages.
-- `validate_translations.py` – Checks placeholder consistency across translations.
-  Pass `--fix` to automatically remove invalid entries.
-
-**Dead-code detection** (run by `run_checks.sh`, see `just fix` above):
-- `find_unused_fluent_translations.py` / `find_unused_slint_translations.py` – Unused
-  translation keys.
-- `find_unused_callbacks.py` – Slint callbacks never invoked from Rust.
-- `find_unused_settings_properties.py` – Settings struct fields never read by the UI.
-- `delete_unused_krokiet_slint_imports.py` – Removes dead `import` lines from `.slint` files.
-
-**Packaging / release:**
-- `gen_cedinia_licenses.py` – Generates `THIRD_PARTY_LICENSES.txt` from Cargo metadata.
-- `gen_android_icons.py` – Generates cedinia's Android adaptive-icon assets from an SVG logo.
-- `simplify_and_minify_svg.py` – Minifies SVG icons via Inkscape.
-- `pack_all_backends.sh` / `.ps1` – Bundles an all-backends krokiet binary with per-backend
-  launcher scripts into a release zip.
-- `flathub.sh` – Generates Flatpak cargo-sources metadata for the Flathub manifest.
-- `add_icon_exe/` – Cargo helper crate that embeds the `.ico` into Windows binaries at build time.
-- `docker/` – `Dockerfile` for containerized builds.
-- `nix/` – Nix flake (`flake.nix`, `packages.nix`) for Nix-based builds.
-- `install_scripts/` – `install_linux.sh`, `install_macos.sh`, `install_windows.bat` end-user
-  installers.
-
-**Dev utilities:**
-- `remove_comments.py` – Strips comments from source files (one-off cleanup tool).
-- `compare_files.sh` – Diffs MD5 hashes of CI build artifacts across runs to check determinism.
-- `run_checks.sh` – Runs all the dead-code detection scripts above; invoked by `just fix`.
-
-**Benchmarks** (standalone Cargo crates):
-- `test_image_perf/`, `test_read_perf/` – Microbenchmarks for image hashing / file reading.
-- `test_compilation_speed_size/` – Tracks build time and binary size across changes.
-
----
-
-## i18n
-
-All user-visible strings use [Fluent](https://projectfluent.org/) (`.ftl` files).
-
-| Project      | Macro  | File pattern                                |
-|--------------|--------|---------------------------------------------|
-| krokiet      | `flk!` | `krokiet/i18n/<lang>/krokiet.ftl`           |
-| cedinia      | `flc!` | `cedinia/i18n/<lang>/cedinia.ftl`           |
-| czkawka_core | `flc!` | `czkawka_core/i18n/<lang>/czkawka_core.ftl` |
-
-English is the source/fallback language. All other locales are AI-translated and then validated.
-
-**Important:** Only edit the English `.ftl` files (`i18n/en/`) directly in this repository.
-All other language files are managed through [Crowdin](https://crowdin.com/) and will be
-**overwritten** when translations are pulled from Crowdin. Any manual edits to non-English
-`.ftl` files in the repo will be lost on the next `just unpack_translations` run.
-
----
-
-## Slint UI conventions
-
-- **Hidden Text elements for width measurement** – where a layout element must adapt its width to
-  translated label text, add off-screen `Text` instances (`x: -10000px; y: -10000px; height: 0`)
-  and compute `preferred-width` at runtime (see `LeftSidePanel`, `CompareInfoBar`).
-- **Enums over strings** – UI state that takes a fixed set of values should use a Slint `enum`,
-  not a `string` (e.g. `ConfirmPopupAction`, `ActiveTool`, `ScanState`).
-- **Global state** – Application-wide state lives in Slint `global` blocks (`GuiState`,
-  `AppState`, `Settings`, `Translations`, …). Rust reads/writes via `app.global::<GlobalName>()`.
-
----
-
-## Build profiles (Cargo.toml)
-
-| Profile        | Purpose                                                              |
-|----------------|----------------------------------------------------------------------|
-| `release`      | Standard release                                                     |
-| `fast_release` | Incremental, stripped – fast iteration                               |
-| `rdebug`       | Release + full debug symbols (profiling)                             |
-| `fastest`      | Max opt, LTO, panic=abort – mostly benchmarks/poc how fast it can be |
-| `fastci`       | Small binary, fast CI builds                                         |
-
----
-
-## justfile quick reference
-
-```
-just run krokiet          # debug run
-just runr krokiet         # fast_release run
-just fix                  # format + clippy + Python checks
-just screens              # screenshots of every Krokiet screen in the dark and light theme -> tmp/screens
-just translate            # AI-translate all projects
-just validate_translations [--fix]
-just pack_translations    # create i18n_translations.zip for Crowdin
-just unpack_translations <path>
-just android              # build + install + launch on device
-just androidr             # release variant
-```

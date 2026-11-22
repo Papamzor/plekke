@@ -23,10 +23,7 @@ pub fn check_if_folder_contains_only_empty_folders<P: AsRef<Path>>(path: P) -> R
             return Err(flc!("core_cannot_read_entry_from_directory", path = path.to_string_lossy()));
         }
     }
-    loop {
-        let Some(entry) = entries_to_check.pop() else {
-            break;
-        };
+    while let Some(entry) = entries_to_check.pop() {
         let Some(file_type) = entry.file_type().ok() else {
             return Err(flc!(
                 "core_unknown_directory_entry",

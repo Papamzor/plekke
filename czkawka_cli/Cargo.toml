@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.94.1"
 description = "CLI frontend of Czkawka"
 license = "MIT"
-repository = "https://github.com/qarmin/czkawka"
+repository = "https://github.com/Papamzor/czkawka"
 
 [dependencies]
 clap = { version = "4.6", features = ["derive", "color"] }

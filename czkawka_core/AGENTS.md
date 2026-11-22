@@ -87,7 +87,7 @@ disk_usage/
 ```
 
 The core has no pixels and no `image` dependency; frontends rasterize a [`Layout`] themselves
-(see `krokiet/src/disk_usage/`). Layout coordinates are on a unit square, so only the aspect ratio of
+(the Tauri app draws it with mwp-ui tokens). Layout coordinates are on a unit square, so only the aspect ratio of
 the target area matters.
 
 ---

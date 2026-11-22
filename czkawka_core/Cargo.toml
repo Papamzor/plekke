@@ -6,7 +6,7 @@ edition = "2024"
 rust-version = "1.94.1"
 description = "Core of Czkawka app"
 license = "MIT"
-repository = "https://github.com/qarmin/czkawka"
+repository = "https://github.com/Papamzor/czkawka"
 build = "build.rs"
 
 [dependencies]
@@ -54,7 +54,6 @@ blake3 = "1.8"
 crc32fast = "1.5"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
-tempfile = "3.27"
 
 # Video Duplicates
 similario_core = "0.2.1"
@@ -123,6 +122,7 @@ rustc_version = "0.4"
 glibc_musl_version = "0.1.0"
 
 [dev-dependencies]
+tempfile = "3.27"
 criterion =  { version = "0.8", default-features = false, features = [] }
 rand = "0.10.3"
 
@@ -138,9 +138,6 @@ harness = false
 name = "bk_tree_benchmark"
 harness = false
 
-#[[bench]]
-#name = "similar_images_hash_benchmark"
-#harness = false
 
 [features]
 default = []
