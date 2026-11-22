@@ -19,9 +19,11 @@
     </a>
     <nav class="mwp-nav__links" aria-label="Tools">
       <a class="mwp-nav__link" href="#duplicates" aria-current="page">Duplicates</a>
+      <a class="mwp-nav__link" href="#similar-images">Similar images</a>
       <a class="mwp-nav__link" href="#big-files">Big files</a>
       <a class="mwp-nav__link" href="#empty-folders">Empty folders</a>
       <a class="mwp-nav__link" href="#empty-files">Empty files</a>
+      <a class="mwp-nav__link" href="#disk-usage">Disk usage</a>
     </nav>
     <div class="mwp-nav__actions">
       <mwp-mode-toggle></mwp-mode-toggle>
@@ -32,6 +34,7 @@
     <header class="mwp-page__head">
       <h1 class="mwp-page__title" id="tool-title">Duplicates</h1>
       <p class="mwp-page__sub" id="tool-sub">Which files are stored more than once?</p>
+      <nav class="mwp-crumbs" aria-label="Folder" id="disk-crumbs" hidden></nav>
     </header>
 
     <div class="mwp-split" data-gap="6">
@@ -76,6 +79,17 @@
                 <input class="mwp-field__control" type="number" id="dup-min-size" min="0" step="any" value="8">
               </label>
             </div>
+            <div class="mwp-stack" data-gap="4" data-options="similar-images" hidden>
+              <label class="mwp-field">
+                <span class="mwp-field__label">How alike</span>
+                <select class="mwp-field__control" id="img-similarity">
+                  <option value="veryHigh">Very alike (near copies)</option>
+                  <option value="high" selected>Alike</option>
+                  <option value="medium">Somewhat alike</option>
+                  <option value="small">Loosely alike (more false matches)</option>
+                </select>
+              </label>
+            </div>
             <div class="mwp-stack" data-gap="4" data-options="big-files" hidden>
               <label class="mwp-field">
                 <span class="mwp-field__label">Show</span>
@@ -91,6 +105,7 @@
             </div>
             <p class="mwp-muted" data-options="empty-folders" hidden>Folders that hold nothing, or only other empty folders.</p>
             <p class="mwp-muted" data-options="empty-files" hidden>Files of 0 bytes.</p>
+            <p class="mwp-muted" data-options="disk-usage" hidden>How much space every folder and file takes. Open a folder to look inside it.</p>
           </div>
         </section>
 
@@ -111,7 +126,7 @@
           <ul id="warnings-list"></ul>
         </div>
 
-        <section class="mwp-card" aria-labelledby="results-title">
+        <section class="mwp-card" aria-labelledby="results-title" id="results-card">
           <header class="mwp-card__head">
             <h2 class="mwp-card__title" id="results-title">Results</h2>
             <div class="mwp-card__actions">
@@ -135,19 +150,55 @@
 
           <div class="mwp-table-wrap mwp-table-wrap--flush" id="results-wrap" tabindex="0" role="region" aria-labelledby="results-title" hidden>
             <table class="mwp-table" data-size="s" id="results-table">
-              <thead>
-                <tr>
-                  <th><span class="mwp-muted">Select</span></th>
-                  <th>Name</th>
-                  <th>Folder</th>
-                  <th class="mwp-table__num">Size</th>
-                  <th>Modified</th>
-                  <th><span class="mwp-muted">Show</span></th>
-                </tr>
-              </thead>
+              <thead id="results-head"></thead>
             </table>
           </div>
         </section>
+
+        <div class="mwp-stack" data-gap="4" id="disk-view" hidden>
+          <section class="mwp-card" aria-labelledby="disk-empty-title" id="disk-empty">
+            <div class="mwp-empty">
+              <span class="mwp-empty__icon"><svg class="mwp-icon" data-size="m" aria-hidden="true"><use href="vendor/mwp-ui/icons.svg#folder"/></svg></span>
+              <h2 class="mwp-empty__title" id="disk-empty-title">No scan yet</h2>
+              <p class="mwp-empty__sub">Add a folder and press Scan.</p>
+            </div>
+          </section>
+
+          <section class="mwp-card" aria-labelledby="disk-chart-title" id="disk-chart-card" hidden>
+            <header class="mwp-card__head">
+              <h2 class="mwp-card__title" id="disk-chart-title">Biggest items</h2>
+            </header>
+            <div class="mwp-card__body">
+              <mwp-chart>
+                <table class="mwp-table">
+                  <caption id="disk-chart-caption">Biggest items</caption>
+                  <thead><tr><th>Item</th><th class="mwp-table__num">Size</th></tr></thead>
+                  <tbody id="disk-chart-rows"></tbody>
+                </table>
+              </mwp-chart>
+            </div>
+          </section>
+
+          <section class="mwp-card" aria-labelledby="disk-title" id="disk-card" hidden>
+            <header class="mwp-card__head">
+              <h2 class="mwp-card__title" id="disk-title">Contents</h2>
+            </header>
+            <div class="mwp-table-wrap mwp-table-wrap--flush" tabindex="0" role="region" aria-labelledby="disk-title">
+              <table class="mwp-table" data-size="s" id="disk-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th class="mwp-table__num">Size</th>
+                    <th class="mwp-table__num">Share</th>
+                    <th><span class="mwp-muted">Show</span></th>
+                  </tr>
+                </thead>
+                <tbody id="disk-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </main>

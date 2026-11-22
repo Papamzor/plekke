@@ -2,17 +2,28 @@ import { mwp } from './vendor/mwp-ui/mwp.js';
 
 const tauri = window.__TAURI__;
 
+const LIST_COLUMNS = ['select', 'name', 'folder', 'size', 'modified', 'show'];
 const TOOLS = {
-  'duplicates': { title: 'Duplicates', sub: 'Which files are stored more than once?', grouped: true, none: 'No duplicates found' },
-  'big-files': { title: 'Big files', sub: 'Which files take the most space?', grouped: false, none: 'No files found' },
-  'empty-folders': { title: 'Empty folders', sub: 'Which folders hold nothing?', grouped: false, none: 'No empty folders found' },
-  'empty-files': { title: 'Empty files', sub: 'Which files are 0 bytes?', grouped: false, none: 'No empty files found' },
+  'duplicates': { title: 'Duplicates', sub: 'Which files are stored more than once?', grouped: true, copies: true, none: 'No duplicates found', columns: LIST_COLUMNS },
+  'similar-images': {
+    title: 'Similar images', sub: 'Which pictures look alike?', grouped: true, noun: ['image', 'images'], none: 'No similar images found',
+    columns: ['select', 'preview', 'name', 'folder', 'resolution', 'similarity', 'size', 'modified', 'show'],
+  },
+  'big-files': { title: 'Big files', sub: 'Which files take the most space?', grouped: false, none: 'No files found', columns: LIST_COLUMNS },
+  'empty-folders': { title: 'Empty folders', sub: 'Which folders hold nothing?', grouped: false, none: 'No empty folders found', columns: LIST_COLUMNS },
+  'empty-files': { title: 'Empty files', sub: 'Which files are 0 bytes?', grouped: false, none: 'No empty files found', columns: LIST_COLUMNS },
+  'disk-usage': { title: 'Disk usage', sub: 'What takes up the space?', disk: true },
 };
 const FOLDERS_KEY = 'plekke.folders';
 const NUMBER = new Intl.NumberFormat(document.documentElement.lang, { maximumFractionDigits: 1 });
+/** Longest side of a preview on screen; the backend renders it at twice that for HiDPI. */
+const PREVIEW_PX = 96;
+/** Bars in the disk usage chart before the rest is folded into one. */
+const CHART_ROWS = 10;
 
 const $ = (id) => document.getElementById(id);
-const state = { tool: 'duplicates', groups: [], selected: new Set(), scanning: false };
+// thumbs: image path -> blob URL of its preview, freed when the results are replaced
+const state = { tool: 'duplicates', groups: [], selected: new Set(), scanning: false, thumbs: new Map() };
 const folders = loadFolders();
 
 // ---- small helpers ----
@@ -62,6 +73,16 @@ function formatDate(seconds) {
 function splitPath(path) {
   const cut = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
   return { name: path.slice(cut + 1) || path, folder: cut > 0 ? path.slice(0, cut) : '' };
+}
+
+/** The row's path is read from its `tr[data-path]` when clicked. */
+function revealButton(name) {
+  return el('button', { type: 'button', class: 'mwp-btn mwp-btn--ghost mwp-btn--icon', 'data-size': 's', 'data-reveal': '', 'aria-label': `Show ${name} in Explorer` }, icon('external-link'));
+}
+
+function revealRow(button) {
+  const { path } = button.closest('tr').dataset;
+  tauri.opener.revealItemInDir(path).catch((error) => mwp.toast(`Cannot show ${splitPath(path).name}: ${error}`, { tone: 'bad' }));
 }
 
 // ---- folders ----
@@ -132,7 +153,16 @@ function showTool() {
     item.hidden = !tool.grouped;
     item.disabled = !tool.grouped;
   }
+  $('results-card').hidden = Boolean(tool.disk);
+  $('disk-view').hidden = !tool.disk;
+  if (tool.columns) {
+    $('results-head').replaceChildren(el('tr', {}, ...tool.columns.map((key) => {
+      const column = COLUMNS[key];
+      return el('th', { class: column.num ? 'mwp-table__num' : null }, typeof column.head === 'function' ? column.head() : column.head);
+    })));
+  }
   setResults([], [], false);
+  resetDisk();
 }
 
 function scanRequest() {
@@ -140,6 +170,10 @@ function scanRequest() {
   if (state.tool === 'duplicates') {
     const minimalFileSize = Math.max(0, Math.round(Number($('dup-min-size').value || 0) * 1000));
     request.tool = { kind: 'duplicates', method: $('dup-method').value, minimalFileSize };
+  } else if (state.tool === 'similar-images') {
+    request.tool = { kind: 'similarImages', similarity: $('img-similarity').value };
+  } else if (state.tool === 'disk-usage') {
+    request.tool = { kind: 'diskUsage' };
   } else if (state.tool === 'big-files') {
     const count = Math.max(1, Math.trunc(Number($('big-count').value) || 50));
     request.tool = { kind: 'bigFiles', count, smallest: $('big-mode').value === 'smallest' };
@@ -161,7 +195,14 @@ async function scan() {
   try {
     const result = await tauri.core.invoke('scan', { request: scanRequest() });
     if (state.tool !== tool) return; // the user switched tools while scanning
-    setResults(result.groups, result.warnings, true);
+    if (TOOLS[tool].disk) {
+      renderWarnings(result.warnings, 'Some items could not be read');
+      const overview = await tauri.core.invoke('disk_folder', { address: [] });
+      if (overview.entries.length === 1) await openDiskFolder([0]);
+      else renderDisk(overview);
+    } else {
+      setResults(result.groups, result.warnings, true);
+    }
     if (result.stopped) mwp.toast('Scan stopped, results may be incomplete', { tone: 'warn' });
   } catch (error) {
     mwp.toast(`Scan failed: ${error}`, { tone: 'bad' });
@@ -195,6 +236,7 @@ function setResults(groups, warnings, scanned) {
   // Single-file groups are not duplicates; flat tools send one group that may be empty.
   state.groups = groups.filter((group) => group.length > (TOOLS[state.tool].grouped ? 1 : 0));
   state.selected.clear();
+  clearThumbnails();
   renderWarnings(warnings, 'Some items could not be read');
   if (scanned) renderResults(TOOLS[state.tool].none, 'Nothing matched in the chosen folders.');
   else renderResults('No scan yet', 'Add a folder and press Scan.');
@@ -222,38 +264,95 @@ function renderResults(emptyTitle, emptySub) {
   const table = $('results-table');
   for (const body of [...table.tBodies]) body.remove();
   // ponytail: renders every row; virtualise if result sets beyond ~20k rows get slow.
-  state.groups.forEach((group, index) => table.append(renderGroup(group, index, tool.grouped)));
+  state.groups.forEach((group, index) => table.append(renderGroup(group, index, tool)));
   updateSelection();
 }
 
 function resultsTitle(count) {
-  if (!TOOLS[state.tool].grouped) return plural(count, 'item', 'items');
+  const tool = TOOLS[state.tool];
+  if (!tool.grouped) return plural(count, 'item', 'items');
+  const groups = plural(state.groups.length, 'group', 'groups');
+  if (!tool.copies) return `${plural(count, ...tool.noun)} in ${groups}`;
   const spare = state.groups.reduce((n, group) => n + group.slice(1).reduce((m, item) => m + item.size, 0), 0);
-  return `${plural(count, 'file', 'files')} in ${plural(state.groups.length, 'group', 'groups')}, ${formatSize(spare)} in extra copies`;
+  return `${plural(count, 'file', 'files')} in ${groups}, ${formatSize(spare)} in extra copies`;
 }
 
-function renderGroup(group, index, grouped) {
+function renderGroup(group, index, tool) {
   const body = el('tbody');
-  if (grouped) {
-    const label = `Group ${index + 1}: ${plural(group.length, 'file', 'files')} of ${formatSize(group[0].size)}`;
-    body.append(el('tr', {}, el('th', { colspan: '6', scope: 'rowgroup', text: label })));
+  if (tool.grouped) {
+    const what = tool.copies ? `${plural(group.length, 'file', 'files')} of ${formatSize(group[0].size)}` : plural(group.length, ...tool.noun);
+    body.append(el('tr', {}, el('th', { colspan: String(tool.columns.length), scope: 'rowgroup', text: `Group ${index + 1}: ${what}` })));
   }
-  for (const item of group) body.append(renderRow(item));
+  for (const item of group) body.append(renderRow(item, tool));
   return body;
 }
 
-function renderRow(item) {
-  const { name, folder } = splitPath(item.path);
-  const checkbox = el('input', { type: 'checkbox', 'aria-label': `Select ${item.path}` });
-  checkbox.checked = state.selected.has(item.path);
-  const size = state.tool === 'empty-folders' ? el('span', { 'aria-hidden': 'true', text: '—' }) : formatSize(item.size);
-  return el('tr', { 'data-path': item.path },
-    el('td', {}, checkbox),
-    el('td', { text: name }),
-    el('td', {}, el('span', { class: 'mwp-muted', text: folder })),
-    el('td', { class: 'mwp-table__num', 'data-sort': String(item.size) }, size),
-    el('td', { text: formatDate(item.modifiedDate) }),
-    el('td', {}, el('button', { type: 'button', class: 'mwp-btn mwp-btn--ghost mwp-btn--icon', 'data-size': 's', 'data-reveal': '', 'aria-label': `Show ${name} in Explorer` }, icon('external-link'))));
+/** Table columns; each tool lists the ones it shows. A cell returns a node or a string, never markup. */
+const COLUMNS = {
+  select: {
+    head: () => el('span', { class: 'mwp-muted', text: 'Select' }),
+    cell: (item) => {
+      const checkbox = el('input', { type: 'checkbox', 'aria-label': `Select ${item.path}` });
+      checkbox.checked = state.selected.has(item.path);
+      return checkbox;
+    },
+  },
+  preview: { head: () => el('span', { class: 'mwp-muted', text: 'Preview' }), cell: previewImage },
+  name: { head: 'Name', cell: (item) => splitPath(item.path).name },
+  folder: { head: 'Folder', cell: (item) => el('span', { class: 'mwp-muted', text: splitPath(item.path).folder }) },
+  resolution: { head: 'Resolution', num: true, cell: (item) => `${item.image.width} × ${item.image.height}` },
+  similarity: { head: 'Similarity', cell: (item) => item.image.similarity },
+  size: { head: 'Size', num: true, cell: (item) => (state.tool === 'empty-folders' ? el('span', { 'aria-hidden': 'true', text: '—' }) : formatSize(item.size)) },
+  modified: { head: 'Modified', cell: (item) => formatDate(item.modifiedDate) },
+  show: { head: () => el('span', { class: 'mwp-muted', text: 'Show' }), cell: (item) => revealButton(splitPath(item.path).name) },
+};
+
+function renderRow(item, tool) {
+  return el('tr', { 'data-path': item.path }, ...tool.columns.map((key) => {
+    const column = COLUMNS[key];
+    return el('td', { class: column.num ? 'mwp-table__num' : null }, column.cell(item));
+  }));
+}
+
+// ---- image previews ----
+
+/** Previews load once their row scrolls near the screen, so a big result does not decode every image at once. */
+const thumbObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    thumbObserver.unobserve(entry.target);
+    loadThumbnail(entry.target);
+  }
+}, { rootMargin: '300px' });
+
+function previewImage(item) {
+  const { width, height } = item.image;
+  const scale = PREVIEW_PX / Math.max(width, height, 1);
+  const box = width && height ? [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))] : [PREVIEW_PX, PREVIEW_PX];
+  const img = el('img', { alt: '', decoding: 'async', width: String(box[0]), height: String(box[1]), 'data-thumb': item.path });
+  const cached = state.thumbs.get(item.path);
+  if (cached) img.src = cached;
+  else thumbObserver.observe(img);
+  return img;
+}
+
+async function loadThumbnail(img) {
+  const path = img.dataset.thumb;
+  try {
+    const png = await tauri.core.invoke('thumbnail', { path });
+    if (!img.isConnected) return; // results were replaced meanwhile
+    const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+    state.thumbs.set(path, url);
+    img.src = url;
+  } catch {
+    img.replaceWith(el('span', { class: 'mwp-muted', text: 'No preview' }));
+  }
+}
+
+function clearThumbnails() {
+  thumbObserver.disconnect();
+  for (const url of state.thumbs.values()) URL.revokeObjectURL(url);
+  state.thumbs.clear();
 }
 
 function onTableChange(event) {
@@ -266,9 +365,7 @@ function onTableChange(event) {
 
 function onTableClick(event) {
   const button = event.target.closest('[data-reveal]');
-  if (!button) return;
-  const { path } = button.closest('tr').dataset;
-  tauri.opener.revealItemInDir(path).catch((error) => mwp.toast(`Cannot show ${splitPath(path).name}: ${error}`, { tone: 'bad' }));
+  if (button) revealRow(button);
 }
 
 function applySelection(mode) {
@@ -300,7 +397,7 @@ async function trashSelected() {
   const items = state.groups.flat().filter((item) => state.selected.has(item.path));
   const size = formatSize(items.reduce((n, item) => n + item.size, 0));
   const lostGroups = tool.grouped ? state.groups.filter((group) => group.every((item) => state.selected.has(item.path))).length : 0;
-  const warning = lostGroups ? `${plural(lostGroups, 'group loses', 'groups lose')} every copy. ` : '';
+  const warning = lostGroups ? `${plural(lostGroups, 'group loses', 'groups lose')} every ${tool.copies ? 'copy' : 'image'}. ` : '';
   const ok = await mwp.confirm({
     title: `Move ${plural(items.length, 'item', 'items')} to the Recycle Bin?`,
     body: `${warning}${items.length === 1 ? 'It takes' : 'They take'} ${size}. You can restore ${items.length === 1 ? 'it' : 'them'} from the Recycle Bin.`,
@@ -334,6 +431,97 @@ async function trashSelected() {
   }
 }
 
+// ---- disk usage ----
+
+function resetDisk() {
+  $('disk-empty').hidden = false;
+  $('disk-chart-card').hidden = true;
+  $('disk-card').hidden = true;
+  $('disk-crumbs').hidden = true;
+}
+
+async function openDiskFolder(address) {
+  try {
+    renderDisk(await tauri.core.invoke('disk_folder', { address }));
+  } catch (error) {
+    mwp.toast(`Cannot open this folder: ${error}`, { tone: 'bad' });
+  }
+}
+
+function renderDisk(folder) {
+  const here = folder.crumbs.at(-1)?.name ?? 'Scanned folders';
+  const count = folder.entries.length + folder.moreEntries;
+  $('disk-empty').hidden = true;
+  $('disk-card').hidden = false;
+  $('disk-chart-card').hidden = !folder.entries.some((entry) => entry.size > 0);
+  $('disk-title').textContent = `${formatSize(folder.size)} in ${plural(count, 'item', 'items')}`;
+  $('disk-chart-caption').textContent = `Biggest items in ${here}`;
+  $('disk-chart-rows').replaceChildren(...diskChartRows(folder));
+  renderCrumbs(folder.crumbs);
+
+  const rows = folder.entries.map((entry) => diskRow(entry, folder.size));
+  if (folder.moreEntries) {
+    const text = `…and ${plural(folder.moreEntries, 'more item', 'more items')}, ${formatSize(folder.moreSize)}`;
+    rows.push(el('tr', {}, el('td', { colspan: '5' }, el('span', { class: 'mwp-muted', text }))));
+  }
+  if (!rows.length) rows.push(el('tr', {}, el('td', { colspan: '5' }, el('span', { class: 'mwp-muted', text: 'This folder is empty' }))));
+  $('disk-rows').replaceChildren(...rows);
+}
+
+function renderCrumbs(crumbs) {
+  const trail = [{ name: 'Scanned folders', address: [] }, ...crumbs];
+  $('disk-crumbs').replaceChildren(...trail.map((crumb, index) => (index === trail.length - 1
+    ? el('span', { class: 'mwp-crumbs__item', 'aria-current': 'page', text: crumb.name })
+    : el('a', { class: 'mwp-crumbs__item', href: '#disk-usage', 'data-address': crumb.address.join(','), text: crumb.name }))));
+  $('disk-crumbs').hidden = false;
+}
+
+/** The biggest entries as bars, the rest folded into one; entries come sorted biggest first. */
+function diskChartRows(folder) {
+  const bar = (label, size) => el('tr', {},
+    el('th', { scope: 'row', text: label }),
+    el('td', { class: 'mwp-table__num' }, el('data', { value: String(size), text: formatSize(size) })));
+  const shown = folder.entries.slice(0, CHART_ROWS).filter((entry) => entry.size > 0);
+  const rows = shown.map((entry) => bar(entry.name, entry.size));
+  const restCount = folder.entries.length - shown.length + folder.moreEntries;
+  const restSize = folder.entries.slice(shown.length).reduce((n, entry) => n + entry.size, folder.moreSize);
+  if (restSize > 0) rows.push(bar(`Everything else (${plural(restCount, 'item', 'items')})`, restSize));
+  return rows;
+}
+
+function diskRow(entry, folderSize) {
+  const name = entry.kind === 'directory'
+    ? el('a', { href: '#disk-usage', 'data-address': entry.address.join(','), text: entry.name })
+    : entry.name;
+  const share = folderSize ? `${NUMBER.format((entry.size / folderSize) * 100)} %` : '';
+  return el('tr', { 'data-path': entry.path },
+    el('td', {}, name),
+    el('td', {}, diskKind(entry)),
+    el('td', { class: 'mwp-table__num' }, formatSize(entry.size)),
+    el('td', { class: 'mwp-table__num' }, share),
+    el('td', {}, revealButton(entry.name)));
+}
+
+function diskKind(entry) {
+  if (entry.kind === 'directory') return `Folder, ${plural(entry.items, 'item', 'items')}`;
+  if (entry.kind === 'symlink') return 'Link';
+  if (entry.kind === 'inaccessible') return el('span', { class: 'mwp-badge', 'data-tone': 'warn', text: 'No access' });
+  return entry.category;
+}
+
+/** Folder links in the breadcrumb and the table open that folder; `data-address` is empty for the overview. */
+function onDiskClick(event) {
+  const reveal = event.target.closest('[data-reveal]');
+  if (reveal) {
+    revealRow(reveal);
+    return;
+  }
+  const link = event.target.closest('a[data-address]');
+  if (!link) return;
+  event.preventDefault();
+  openDiskFolder(link.dataset.address ? link.dataset.address.split(',').map(Number) : []);
+}
+
 // ---- wiring ----
 
 renderFolders('included');
@@ -355,6 +543,8 @@ $('select-menu').addEventListener('click', (event) => {
 });
 $('results-table').addEventListener('change', onTableChange);
 $('results-table').addEventListener('click', onTableClick);
+$('disk-table').addEventListener('click', onDiskClick);
+$('disk-crumbs').addEventListener('click', onDiskClick);
 window.addEventListener('hashchange', showTool);
 tauri.event.listen('scan-progress', showProgress);
 showTool();

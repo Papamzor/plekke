@@ -1334,6 +1334,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "czkawka_core",
+ "image",
  "log",
  "serde",
  "serde_json",
