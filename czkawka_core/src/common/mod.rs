@@ -14,6 +14,7 @@ pub mod model;
 pub mod process_utils;
 pub mod progress_data;
 pub mod progress_stop_handler;
+pub(crate) mod reference_groups;
 pub mod tool_data;
 pub mod traits;
 pub mod video_utils;

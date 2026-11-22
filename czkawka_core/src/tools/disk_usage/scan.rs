@@ -1,21 +1,32 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rayon::prelude::*;
 
+use crate::common::directories::Directories;
+use crate::common::items::ExcludedItems;
 use crate::common::progress_stop_handler::check_if_stop_received;
+use crate::tools::disk_usage::ContentDetection;
 use crate::tools::disk_usage::category::FileCategory;
-use crate::tools::disk_usage::scan::{ScanContext, TreeSource};
 use crate::tools::disk_usage::tree::{DiskNode, DiskTree};
 
-pub(crate) struct PortableSource;
+pub(crate) struct ScanContext<'a> {
+    pub directories: &'a Directories,
+    pub stop_flag: &'a Arc<AtomicBool>,
+    pub entries_counter: &'a AtomicUsize,
+    pub content_detection: ContentDetection,
+    pub excluded_items: &'a ExcludedItems,
+    pub ignore_excluded_items: bool,
+    pub ignore_excluded_directories: bool,
+}
 
-impl TreeSource for PortableSource {
-    fn scan(&self, roots: &[PathBuf], context: &ScanContext) -> DiskTree {
-        let nodes = roots.par_iter().map(|root| scan_root(root, context)).collect();
-        DiskTree::new(nodes)
-    }
+/// Builds the size tree with a portable rayon walk. Roots may be directories or single files;
+/// when stopped, returns whatever was gathered so far.
+pub(crate) fn scan(roots: &[PathBuf], context: &ScanContext) -> DiskTree {
+    let nodes = roots.par_iter().map(|root| scan_root(root, context)).collect();
+    DiskTree::new(nodes)
 }
 
 fn scan_root(root: &Path, context: &ScanContext) -> DiskNode {

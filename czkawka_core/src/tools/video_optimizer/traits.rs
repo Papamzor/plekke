@@ -9,11 +9,10 @@ use fun_time::fun_time;
 use humansize::{DECIMAL, format_size};
 
 use crate::common::consts::VIDEO_FILES_EXTENSIONS;
-use crate::common::ffmpeg_utils::check_if_ffprobe_ffmpeg_exists;
+use crate::common::ffmpeg_utils::ffmpeg_available;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, impl_common_data};
 use crate::common::traits::{PrintResults, Search};
-use crate::flc;
 use crate::tools::video_optimizer::{Info, VideoOptimizer, VideoOptimizerParameters};
 
 impl PrintResults for VideoOptimizer {
@@ -94,10 +93,7 @@ impl Search for VideoOptimizer {
         let start_time = Instant::now();
 
         self.common_data.stopped_search |= (|| {
-            if !check_if_ffprobe_ffmpeg_exists() {
-                self.common_data.text_messages.critical = Some(flc!("core_ffmpeg_not_found"));
-                #[cfg(target_os = "windows")]
-                self.common_data.text_messages.errors.push(flc!("core_ffmpeg_not_found_windows"));
+            if !ffmpeg_available(&mut self.common_data.text_messages) {
                 return ControlFlow::Continue(());
             }
 

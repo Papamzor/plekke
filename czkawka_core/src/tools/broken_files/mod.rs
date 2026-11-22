@@ -27,7 +27,7 @@ pub enum CheckedTypesSingle {
     Markup,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct BrokenEntry {
     pub path: PathBuf,
     pub modified_date: u64,
@@ -53,7 +53,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-            errors: BTreeMap::new(),
+            ..Default::default()
         }
     }
 }

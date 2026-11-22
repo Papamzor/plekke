@@ -21,6 +21,7 @@ use crate::common::create_crash_message;
 use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, ProgressData, SameMusicMode, SameMusicStage, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
+use crate::common::reference_groups::split_reference_groups;
 use crate::common::tool_data::CommonToolData;
 use crate::common::traits::ResultEntry;
 use crate::flc;
@@ -50,16 +51,6 @@ impl SameMusic {
             .collect();
         debug!("check_files - Found {} music files.", self.music_to_check.len());
         ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "load_cache", level = "debug")]
-    fn load_cache(&mut self, checking_tags: bool) -> (BTreeMap<String, MusicEntry>, BTreeMap<String, MusicEntry>, BTreeMap<String, MusicEntry>) {
-        load_and_split_cache_generalized_by_path(&get_similar_music_cache_file(checking_tags), mem::take(&mut self.music_to_check), self)
-    }
-
-    #[fun_time(message = "save_cache", level = "debug")]
-    fn save_cache(&mut self, vec_file_entry: &[MusicEntry], loaded_hash_map: BTreeMap<String, MusicEntry>, checking_tags: bool) {
-        save_and_connect_cache_generalized_by_path(&get_similar_music_cache_file(checking_tags), vec_file_entry, loaded_hash_map, self);
     }
 
     #[fun_time(message = "calculate_fingerprint", level = "debug")]
@@ -96,7 +87,8 @@ impl SameMusic {
             0,
         );
 
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_cache(false);
+        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) =
+            load_and_split_cache_generalized_by_path(&get_similar_music_cache_file(false), mem::take(&mut self.music_to_check), &mut self.common_data);
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
@@ -146,7 +138,7 @@ impl SameMusic {
 
         vec_file_entry.extend(records_already_cached.into_values());
 
-        self.save_cache(&vec_file_entry, loaded_hash_map, false);
+        save_and_connect_cache_generalized_by_path(&get_similar_music_cache_file(false), &vec_file_entry, loaded_hash_map, &mut self.common_data);
 
         self.music_entries = vec_file_entry;
 
@@ -171,7 +163,8 @@ impl SameMusic {
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::SameMusic(mode, SameMusicStage::LoadingTagsCache(CacheLoadPhase::Loading)), 0, 0);
 
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_cache(true);
+        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) =
+            load_and_split_cache_generalized_by_path(&get_similar_music_cache_file(true), mem::take(&mut self.music_to_check), &mut self.common_data);
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
@@ -203,7 +196,7 @@ impl SameMusic {
 
         vec_file_entry.extend(records_already_cached.into_values());
 
-        self.save_cache(&vec_file_entry, loaded_hash_map, true);
+        save_and_connect_cache_generalized_by_path(&get_similar_music_cache_file(true), &vec_file_entry, loaded_hash_map, &mut self.common_data);
 
         self.music_entries = vec_file_entry;
 
@@ -268,21 +261,9 @@ impl SameMusic {
 
         self.duplicated_music_entries = old_duplicates;
 
-        if self.common_data.use_reference_folders {
-            self.duplicated_music_entries_referenced = self.common_data.directories.filter_reference_folders(mem::take(&mut self.duplicated_music_entries));
-        }
-
-        if self.common_data.use_reference_folders {
-            for (_fe, vector) in &self.duplicated_music_entries_referenced {
-                self.information.number_of_duplicates += vector.len();
-                self.information.number_of_groups += 1;
-            }
-        } else {
-            for vector in &self.duplicated_music_entries {
-                self.information.number_of_duplicates += vector.len() - 1;
-                self.information.number_of_groups += 1;
-            }
-        }
+        let (number_of_groups, number_of_duplicates) = split_reference_groups(&self.common_data, &mut self.duplicated_music_entries, &mut self.duplicated_music_entries_referenced);
+        self.information.number_of_groups += number_of_groups;
+        self.information.number_of_duplicates += number_of_duplicates;
     }
 
     fn split_fingerprints_to_base_and_files_to_compare(&self, music_data: Vec<MusicEntry>) -> (Vec<MusicEntry>, Vec<MusicEntry>) {
@@ -430,21 +411,9 @@ impl SameMusic {
 
         self.duplicated_music_entries = duplicated_music_entries;
 
-        if self.common_data.use_reference_folders {
-            self.duplicated_music_entries_referenced = self.common_data.directories.filter_reference_folders(mem::take(&mut self.duplicated_music_entries));
-        }
-
-        if self.common_data.use_reference_folders {
-            for (_fe, vector) in &self.duplicated_music_entries_referenced {
-                self.information.number_of_duplicates += vector.len();
-                self.information.number_of_groups += 1;
-            }
-        } else {
-            for vector in &self.duplicated_music_entries {
-                self.information.number_of_duplicates += vector.len() - 1;
-                self.information.number_of_groups += 1;
-            }
-        }
+        let (number_of_groups, number_of_duplicates) = split_reference_groups(&self.common_data, &mut self.duplicated_music_entries, &mut self.duplicated_music_entries_referenced);
+        self.information.number_of_groups += number_of_groups;
+        self.information.number_of_duplicates += number_of_duplicates;
 
         // Clear unused data
         self.music_entries.clear();

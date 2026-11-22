@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::cache::cleaning::{should_clean_cache, update_cleaning_timestamp};
 use crate::common::config_cache_path::open_cache_folder;
-use crate::common::tool_data::CommonData;
+use crate::common::tool_data::CommonToolData;
 use crate::common::traits::ResultEntry;
 use crate::flc;
 use crate::helpers::messages::Messages;
@@ -249,11 +249,12 @@ where
     (text_messages, None)
 }
 
-pub(crate) fn load_and_split_cache_generalized_by_size<C: CommonData, K>(
+#[fun_time(message = "load_and_split_cache_generalized_by_size", level = "debug")]
+pub(crate) fn load_and_split_cache_generalized_by_size<K>(
     cache_file_name: &str,
     use_cache: bool,
     items_to_check: BTreeMap<u64, Vec<K>>,
-    common_data: &mut C,
+    common_data: &mut CommonToolData,
 ) -> (BTreeMap<u64, Vec<K>>, BTreeMap<u64, Vec<K>>, BTreeMap<u64, Vec<K>>)
 where
     for<'a> K: Deserialize<'a> + ResultEntry + Sized + Send + Sync + Clone,
@@ -262,8 +263,8 @@ where
         return (Default::default(), Default::default(), items_to_check);
     }
 
-    let (messages, loaded_items) = load_cache_from_file_generalized_by_size::<K>(cache_file_name, common_data.get_delete_outdated_cache(), &items_to_check);
-    common_data.get_text_messages_mut().extend_with_another_messages(messages);
+    let (messages, loaded_items) = load_cache_from_file_generalized_by_size::<K>(cache_file_name, common_data.delete_outdated_cache, &items_to_check);
+    common_data.text_messages.extend_with_another_messages(messages);
     let loaded_hash_map = loaded_items.unwrap_or_default();
 
     let mut records_already_cached: BTreeMap<u64, Vec<K>> = Default::default();
@@ -301,15 +302,16 @@ where
     (loaded_hash_map, records_already_cached, non_cached_files_to_check)
 }
 
-pub(crate) fn load_and_split_cache_generalized_by_path<C: CommonData, K>(
+#[fun_time(message = "load_and_split_cache_generalized_by_path", level = "debug")]
+pub(crate) fn load_and_split_cache_generalized_by_path<K>(
     cache_file_name: &str,
     mut items_to_check: BTreeMap<String, K>,
-    common_data: &mut C,
+    common_data: &mut CommonToolData,
 ) -> (BTreeMap<String, K>, BTreeMap<String, K>, BTreeMap<String, K>)
 where
     for<'a> K: Deserialize<'a> + ResultEntry + Sized + Send + Sync + Clone,
 {
-    if !common_data.get_use_cache() {
+    if !common_data.use_cache {
         return (Default::default(), Default::default(), items_to_check);
     }
 
@@ -318,8 +320,8 @@ where
     let mut records_already_cached: BTreeMap<String, K> = Default::default();
     let mut non_cached_files_to_check: BTreeMap<String, K> = Default::default();
 
-    let (messages, loaded_items) = load_cache_from_file_generalized_by_path::<K>(cache_file_name, common_data.get_delete_outdated_cache(), &items_to_check);
-    common_data.get_text_messages_mut().extend_with_another_messages(messages);
+    let (messages, loaded_items) = load_cache_from_file_generalized_by_path::<K>(cache_file_name, common_data.delete_outdated_cache, &items_to_check);
+    common_data.text_messages.extend_with_another_messages(messages);
     loaded_hash_map = loaded_items.unwrap_or_default();
 
     debug!("load_cache - Starting to check for differences");
@@ -339,11 +341,12 @@ where
     (loaded_hash_map, records_already_cached, non_cached_files_to_check)
 }
 
-pub(crate) fn save_and_connect_cache_generalized_by_path<C: CommonData, K>(cache_file_name: &str, vec_file_entry: &[K], loaded_hash_map: BTreeMap<String, K>, common_data: &mut C)
+#[fun_time(message = "save_and_connect_cache_generalized_by_path", level = "debug")]
+pub(crate) fn save_and_connect_cache_generalized_by_path<K>(cache_file_name: &str, vec_file_entry: &[K], loaded_hash_map: BTreeMap<String, K>, common_data: &mut CommonToolData)
 where
     K: Serialize + ResultEntry + Sized + Send + Sync + Clone,
 {
-    if !common_data.get_use_cache() {
+    if !common_data.use_cache {
         return;
     }
     let mut all_results: BTreeMap<String, K> = Default::default();
@@ -356,7 +359,7 @@ where
     }
 
     let messages = save_cache_to_file_generalized(cache_file_name, &all_results, 0);
-    common_data.get_text_messages_mut().extend_with_another_messages(messages);
+    common_data.text_messages.extend_with_another_messages(messages);
 }
 
 #[cfg(test)]

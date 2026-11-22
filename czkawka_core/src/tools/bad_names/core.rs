@@ -1,14 +1,15 @@
+use std::mem;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::{fs, mem};
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
 use log::debug;
 use rayon::prelude::*;
 
+use crate::common::fs_ops::rename_all;
 use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -88,29 +89,14 @@ impl BadNames {
 
     #[fun_time(message = "fix_bad_names", level = "debug")]
     pub fn fix_bad_names(&mut self, stop_flag: &Arc<AtomicBool>) {
-        let warnings: Vec<_> = mem::take(&mut self.bad_names_files)
-            .into_par_iter()
+        let renames = mem::take(&mut self.bad_names_files)
+            .into_iter()
             .map(|entry| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-
                 let new_path = entry.path.with_file_name(&entry.new_name);
-
-                if new_path.exists() {
-                    return Some(Some(format!("Cannot rename {:?} to {:?}: target file already exists", entry.path, new_path)));
-                }
-
-                match fs::rename(&entry.path, &new_path) {
-                    Ok(()) => Some(None),
-                    Err(e) => Some(Some(format!("Failed to rename {:?} to {:?}: {}", entry.path, new_path, e))),
-                }
+                (entry.path, new_path)
             })
-            .while_some()
-            .flatten()
             .collect();
-
-        self.common_data.text_messages.warnings.extend(warnings);
+        self.common_data.text_messages.warnings.extend(rename_all(renames, stop_flag));
     }
 }
 

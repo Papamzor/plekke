@@ -1,8 +1,13 @@
 use std::hash::{BuildHasher, RandomState};
 use std::io::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::{fs, io};
 
+use rayon::prelude::*;
+
+use crate::common::progress_stop_handler::check_if_stop_received;
 use crate::flc;
 
 const MAX_SYMLINK_HARDLINK_ATTEMPTS: u8 = 5;
@@ -84,6 +89,24 @@ pub fn remove_single_file<P: AsRef<Path>>(full_path: P, remove_to_trash: bool) -
 
 // Function to create hardlink, when destination exists
 // This is always true in this app, because creating hardlink, to newly created file is pointless
+/// Renames each (from, to) pair in parallel, never overwriting an existing target; returns one warning per failure.
+pub(crate) fn rename_all(renames: Vec<(PathBuf, PathBuf)>, stop_flag: &Arc<AtomicBool>) -> Vec<String> {
+    renames
+        .into_par_iter()
+        .map(|(from, to)| {
+            if check_if_stop_received(stop_flag) {
+                return None;
+            }
+            if to.exists() {
+                return Some(Some(format!("Cannot rename {from:?} to {to:?}: target file already exists")));
+            }
+            Some(fs::rename(&from, &to).err().map(|e| format!("Failed to rename {from:?} to {to:?}: {e}")))
+        })
+        .while_some()
+        .flatten()
+        .collect()
+}
+
 pub fn make_hard_link<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
     replace_with_link(src.as_ref(), dst.as_ref(), "hardlink", |src, dst| {
         fs::hard_link(src, dst).map_err(|e| describe_hardlink_error(e, dst))

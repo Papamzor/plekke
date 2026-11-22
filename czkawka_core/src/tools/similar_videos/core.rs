@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::mem;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -16,13 +16,13 @@ use similario_core::visual::{FfmpegTimeout, VideoSignature};
 
 use crate::common::audio_fingerprint::calc_fingerprint_and_duration;
 use crate::common::cache::{CACHE_VERSION, CACHE_VIDEO_VERSION, load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
-use crate::common::config_cache_path::get_config_cache_path;
 use crate::common::dir_traversal::{inode, take_1_per_inode};
 use crate::common::model::ToolType;
 use crate::common::progress_data::{CacheLoadPhase, ProgressData, SimilarVideosMode, SimilarVideosStage, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
+use crate::common::reference_groups::split_reference_groups;
 use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::video_utils::{VIDEO_THUMBNAILS_SUBFOLDER, VideoMetadata, generate_thumbnail};
+use crate::common::video_utils::{ThumbnailSettings, VideoMetadata, generate_thumbnails};
 use crate::flc;
 use crate::helpers::long_operation_watcher::run_with_long_operation_warnings;
 use crate::tools::similar_videos::{SimilarVideos, SimilarVideosParameters, VideoAudioEntry, VideosEntry};
@@ -38,6 +38,14 @@ impl SimilarVideos {
             similar_referenced_vectors: Vec::new(),
             audio_config: Configuration::preset_test1(),
             params,
+        }
+    }
+
+    fn mode(&self) -> SimilarVideosMode {
+        if self.params.check_audio_content {
+            SimilarVideosMode::AudioContent
+        } else {
+            SimilarVideosMode::VisualHash
         }
     }
 
@@ -69,11 +77,7 @@ impl SimilarVideos {
     pub(crate) fn check_for_similar_videos(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
         let grouped_file_entries = self.common_data.collect_grouped_files(stop_flag, progress_sender, inode, |_| {})?;
 
-        let mode = if self.params.check_audio_content {
-            SimilarVideosMode::AudioContent
-        } else {
-            SimilarVideosMode::VisualHash
-        };
+        let mode = self.mode();
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::SimilarVideos(mode, SimilarVideosStage::HidingHardLinks),
@@ -156,13 +160,12 @@ impl SimilarVideos {
             return ControlFlow::Continue(());
         }
 
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_cache_at_start();
+        let params = &self.params;
+        let cache_file = get_similar_videos_cache_file(params.skip_forward_amount, params.duration, params.crop_detect, params.window_count);
+        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) =
+            load_and_split_cache_generalized_by_path(&cache_file, mem::take(&mut self.videos_to_check), &mut self.common_data);
 
-        let mode = if self.params.check_audio_content {
-            SimilarVideosMode::AudioContent
-        } else {
-            SimilarVideosMode::VisualHash
-        };
+        let mode = self.mode();
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::SimilarVideos(mode, SimilarVideosStage::CalculatingHashes),
@@ -196,7 +199,7 @@ impl SimilarVideos {
         // Just connect loaded results with already calculated hashes
         vec_file_entry.extend(records_already_cached.into_values());
 
-        self.save_cache(&vec_file_entry, loaded_hash_map);
+        save_and_connect_cache_generalized_by_path(&cache_file, &vec_file_entry, loaded_hash_map, &mut self.common_data);
 
         let mut hashmap_with_file_entries: IndexMap<String, VideosEntry> = Default::default();
         let mut signatures: Vec<VideoSignature> = Vec::new();
@@ -217,119 +220,30 @@ impl SimilarVideos {
         // Comparing is fast, so groups are built from already hashed files even after stop; only thumbnails are skipped
         let stopped = check_if_stop_received(stop_flag) || self.create_thumbnails(progress_sender, stop_flag).is_break();
 
-        self.remove_from_reference_folders();
-        self.count_groups();
+        self.split_and_count_groups();
 
         self.videos_to_check = Default::default();
 
         if stopped { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
     }
 
-    fn count_groups(&mut self) {
-        if self.common_data.use_reference_folders {
-            for (_fe, vector) in &self.similar_referenced_vectors {
-                self.information.number_of_duplicates += vector.len();
-                self.information.number_of_groups += 1;
-            }
-        } else {
-            for vector in &self.similar_vectors {
-                self.information.number_of_duplicates += vector.len() - 1;
-                self.information.number_of_groups += 1;
-            }
-        }
-    }
-
     #[fun_time(message = "create_thumbnails", level = "debug")]
     pub(crate) fn create_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>) -> ControlFlow<()> {
-        let mode = if self.params.check_audio_content {
-            SimilarVideosMode::AudioContent
-        } else {
-            SimilarVideosMode::VisualHash
-        };
         let stage = if self.params.check_audio_content {
-            ToolStage::SimilarVideos(mode, SimilarVideosStage::CreatingAudioThumbnails)
+            SimilarVideosStage::CreatingAudioThumbnails
         } else {
-            ToolStage::SimilarVideos(mode, SimilarVideosStage::CreatingThumbnails)
+            SimilarVideosStage::CreatingThumbnails
         };
-        let progress_handler = prepare_thread_handler_common(progress_sender, stage, self.similar_vectors.iter().map(|e| e.len()).sum::<usize>(), 0);
-
-        let Some(config_cache_path) = get_config_cache_path() else {
-            return ControlFlow::Continue(());
+        let stage = ToolStage::SimilarVideos(self.mode(), stage);
+        let params = &self.params;
+        let settings = ThumbnailSettings {
+            generate: params.generate_thumbnails,
+            percentage_from_start: params.thumbnail_video_percentage_from_start,
+            grid: params.generate_thumbnail_grid_instead_of_single,
+            grid_tiles_per_side: params.thumbnail_grid_tiles_per_side,
         };
-
-        let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
-        if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
-            debug!("Failed to create thumbnails directory: {e}");
-            return ControlFlow::Continue(());
-        }
-        let thumbnail_video_percentage_from_start = self.params.thumbnail_video_percentage_from_start;
-        let generate_grid_instead_of_single = self.params.generate_thumbnail_grid_instead_of_single;
-        let thumbnail_grid_tiles_per_side = self.params.thumbnail_grid_tiles_per_side;
-        let errors = self
-            .similar_vectors
-            .par_iter_mut()
-            .with_max_len(2)
-            .map(|vec_file_entry| {
-                let mut errs = Vec::new();
-                for file_entry in vec_file_entry {
-                    if check_if_stop_received(stop_flag) {
-                        return errs;
-                    }
-
-                    match generate_thumbnail(
-                        stop_flag,
-                        &file_entry.path,
-                        file_entry.size,
-                        file_entry.modified_date,
-                        file_entry.duration,
-                        &thumbnails_dir,
-                        thumbnail_video_percentage_from_start,
-                        generate_grid_instead_of_single,
-                        thumbnail_grid_tiles_per_side,
-                        self.params.generate_thumbnails,
-                    ) {
-                        Ok(Some(thumbnail_path)) => {
-                            file_entry.thumbnail_path = Some(thumbnail_path);
-                        }
-                        Ok(None) => {}
-                        Err(e) => errs.push(e),
-                    }
-
-                    progress_handler.increase_items(1);
-                }
-
-                errs
-            })
-            .flatten()
-            .collect::<Vec<String>>();
-
-        self.common_data.text_messages.warnings.extend(errors);
-
-        progress_handler.join_thread();
-        if check_if_stop_received(stop_flag) {
-            return ControlFlow::Break(());
-        }
-
-        ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "save_cache", level = "debug")]
-    fn save_cache(&mut self, vec_file_entry: &[VideosEntry], loaded_hash_map: BTreeMap<String, VideosEntry>) {
-        save_and_connect_cache_generalized_by_path(
-            &get_similar_videos_cache_file(self.params.skip_forward_amount, self.params.duration, self.params.crop_detect, self.params.window_count),
-            vec_file_entry,
-            loaded_hash_map,
-            self,
-        );
-    }
-
-    #[fun_time(message = "load_cache_at_start", level = "debug")]
-    fn load_cache_at_start(&mut self) -> (BTreeMap<String, VideosEntry>, BTreeMap<String, VideosEntry>, BTreeMap<String, VideosEntry>) {
-        load_and_split_cache_generalized_by_path(
-            &get_similar_videos_cache_file(self.params.skip_forward_amount, self.params.duration, self.params.crop_detect, self.params.window_count),
-            mem::take(&mut self.videos_to_check),
-            self,
-        )
+        let entries = self.similar_vectors.iter_mut().flatten().collect();
+        generate_thumbnails(entries, settings, stage, progress_sender, stop_flag, &mut self.common_data.text_messages.warnings)
     }
 
     #[fun_time(message = "match_groups_of_videos", level = "debug")]
@@ -369,11 +283,10 @@ impl SimilarVideos {
         self.similar_vectors = collected_similar_videos;
     }
 
-    #[fun_time(message = "remove_from_reference_folders", level = "debug")]
-    fn remove_from_reference_folders(&mut self) {
-        if self.common_data.use_reference_folders {
-            self.similar_referenced_vectors = self.common_data.directories.filter_reference_folders(mem::take(&mut self.similar_vectors));
-        }
+    fn split_and_count_groups(&mut self) {
+        let (number_of_groups, number_of_duplicates) = split_reference_groups(&self.common_data, &mut self.similar_vectors, &mut self.similar_referenced_vectors);
+        self.information.number_of_groups += number_of_groups;
+        self.information.number_of_duplicates += number_of_duplicates;
     }
     #[fun_time(message = "calculate_audio_fingerprints", level = "debug")]
     pub(crate) fn calculate_audio_fingerprints(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
@@ -381,11 +294,7 @@ impl SimilarVideos {
             return ControlFlow::Continue(());
         }
 
-        let mode = if self.params.check_audio_content {
-            SimilarVideosMode::AudioContent
-        } else {
-            SimilarVideosMode::VisualHash
-        };
+        let mode = self.mode();
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::SimilarVideos(mode, SimilarVideosStage::LoadingAudioCache(CacheLoadPhase::Loading)),
@@ -394,7 +303,7 @@ impl SimilarVideos {
         );
 
         let (loaded_hash_map, records_already_cached, non_cached_files_to_check) =
-            load_and_split_cache_generalized_by_path(&get_similar_videos_audio_cache_file(), mem::take(&mut self.audio_to_check), self);
+            load_and_split_cache_generalized_by_path(&get_similar_videos_audio_cache_file(), mem::take(&mut self.audio_to_check), &mut self.common_data);
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
@@ -446,7 +355,7 @@ impl SimilarVideos {
 
         vec_audio_entries.extend(records_already_cached.into_values());
 
-        save_and_connect_cache_generalized_by_path(&get_similar_videos_audio_cache_file(), &vec_audio_entries, loaded_hash_map, self);
+        save_and_connect_cache_generalized_by_path(&get_similar_videos_audio_cache_file(), &vec_audio_entries, loaded_hash_map, &mut self.common_data);
 
         self.audio_to_check = vec_audio_entries.into_iter().map(|e| (e.path.to_string_lossy().to_string(), e)).collect();
 
@@ -469,11 +378,7 @@ impl SimilarVideos {
             .filter(|e| e.audio_duration_seconds >= audio_min_duration_seconds)
             .collect();
 
-        let mode = if self.params.check_audio_content {
-            SimilarVideosMode::AudioContent
-        } else {
-            SimilarVideosMode::VisualHash
-        };
+        let mode = self.mode();
         let progress_handler = prepare_thread_handler_common(
             progress_sender,
             ToolStage::SimilarVideos(mode, SimilarVideosStage::ComparingAudioFingerprints),
@@ -565,8 +470,7 @@ impl SimilarVideos {
 
         self.similar_vectors = similar_vectors;
 
-        self.remove_from_reference_folders();
-        self.count_groups();
+        self.split_and_count_groups();
 
         ControlFlow::Continue(())
     }
@@ -618,15 +522,8 @@ fn audio_entry_to_videos_entry(ae: &VideoAudioEntry) -> VideosEntry {
         path: ae.path.clone(),
         size: ae.size,
         modified_date: ae.modified_date,
-        signature: None,
-        error: String::new(),
-        fps: None,
-        codec: None,
-        bitrate: None,
-        width: None,
-        height: None,
         duration: Some(f64::from(ae.audio_duration_seconds)),
-        thumbnail_path: None,
+        ..Default::default()
     }
 }
 

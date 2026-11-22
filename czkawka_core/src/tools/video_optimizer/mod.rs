@@ -14,6 +14,7 @@ pub use self::encoding::{HardwareEncoder, NoiseReductionMethod, VideoCodec};
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
 use crate::common::traits::impl_result_entry;
+use crate::common::video_utils::ThumbnailSettings;
 use crate::flc;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -91,12 +92,31 @@ pub enum VideoOptimizerParameters {
 
 impl VideoOptimizerParameters {
     pub fn get_generate_number_of_items_in_thumbnail_grid(&self) -> u8 {
-        let (generate_thumbnail_grid_instead_of_single, thumbnail_grid_tiles_per_side) = match self {
-            Self::VideoTranscode(params) => (params.generate_thumbnail_grid_instead_of_single, params.thumbnail_grid_tiles_per_side),
-            Self::VideoCrop(params) => (params.generate_thumbnail_grid_instead_of_single, params.thumbnail_grid_tiles_per_side),
-        };
+        let settings = self.thumbnail_settings();
+        if settings.grid { settings.grid_tiles_per_side } else { 1 }
+    }
 
-        if generate_thumbnail_grid_instead_of_single { thumbnail_grid_tiles_per_side } else { 1 }
+    pub(crate) fn thumbnail_settings(&self) -> ThumbnailSettings {
+        let (generate, percentage_from_start, grid, grid_tiles_per_side) = match self {
+            Self::VideoTranscode(p) => (
+                p.generate_thumbnails,
+                p.thumbnail_video_percentage_from_start,
+                p.generate_thumbnail_grid_instead_of_single,
+                p.thumbnail_grid_tiles_per_side,
+            ),
+            Self::VideoCrop(p) => (
+                p.generate_thumbnails,
+                p.thumbnail_video_percentage_from_start,
+                p.generate_thumbnail_grid_instead_of_single,
+                p.thumbnail_grid_tiles_per_side,
+            ),
+        };
+        ThumbnailSettings {
+            generate,
+            percentage_from_start,
+            grid,
+            grid_tiles_per_side,
+        }
     }
 }
 
@@ -184,7 +204,7 @@ impl VideoCropParams {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VideoTranscodeEntry {
     pub path: PathBuf,
     pub size: u64,
@@ -201,7 +221,7 @@ pub struct VideoTranscodeEntry {
     pub thumbnail_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VideoCropEntry {
     pub path: PathBuf,
     pub size: u64,
@@ -227,13 +247,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-            error: None,
-            codec: String::new(),
-            width: 0,
-            height: 0,
-            duration: 0.0,
-            bitrate: None,
-            thumbnail_path: None,
+            ..Default::default()
         }
     }
 
@@ -242,14 +256,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-            error: None,
-            codec: String::new(),
-            width: 0,
-            height: 0,
-            new_image_dimensions: (0, 0, 0, 0),
-            duration: 0.0,
-            bitrate: None,
-            thumbnail_path: None,
+            ..Default::default()
         }
     }
 }

@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fmt::Display;
+use std::fs::{self, File};
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::{mem, panic};
+use std::{io, mem, panic};
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
@@ -27,6 +28,27 @@ use crate::common::tool_data::CommonToolData;
 use crate::common::{create_crash_message_generic, normalize_error_string};
 use crate::helpers::audio_checker;
 use crate::tools::broken_files::{BrokenEntry, BrokenFiles, BrokenFilesParameters, CheckedTypes, CheckedTypesSingle, Info, TypeOfFile};
+
+/// File types, the checked types that enable them and their extensions; the first matching extension wins.
+pub(crate) const EXTENSIONS_BY_TYPE: &[(TypeOfFile, CheckedTypes, &[&str])] = &[
+    (TypeOfFile::Pdf, CheckedTypes::PDF, PDF_FILES_EXTENSIONS),
+    (TypeOfFile::Audio, CheckedTypes::AUDIO, AUDIO_FILES_CONTENT_EXTENSIONS),
+    (TypeOfFile::Image, CheckedTypes::IMAGE, IMAGE_RS_BROKEN_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveZip, CheckedTypes::ARCHIVE, ZIP_FILES_EXTENSIONS),
+    (TypeOfFile::Archive7z, CheckedTypes::ARCHIVE, SEVENZ_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveGz, CheckedTypes::ARCHIVE, GZ_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveTar, CheckedTypes::ARCHIVE, TAR_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveZst, CheckedTypes::ARCHIVE, ZST_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveBz2, CheckedTypes::ARCHIVE, BZ2_FILES_EXTENSIONS),
+    (TypeOfFile::ArchiveXz, CheckedTypes::ARCHIVE, XZ_FILES_EXTENSIONS),
+    (TypeOfFile::Font, CheckedTypes::FONT, FONT_FILES_EXTENSIONS),
+    (TypeOfFile::Json, CheckedTypes::MARKUP, JSON_FILES_EXTENSIONS),
+    (TypeOfFile::Xml, CheckedTypes::MARKUP, XML_FILES_EXTENSIONS),
+    (TypeOfFile::Toml, CheckedTypes::MARKUP, TOML_FILES_EXTENSIONS),
+    (TypeOfFile::Yaml, CheckedTypes::MARKUP, YAML_FILES_EXTENSIONS),
+    (TypeOfFile::Svg, CheckedTypes::MARKUP, SVG_FILES_EXTENSIONS),
+    (TypeOfFile::Video, CheckedTypes::VIDEO_FFPROBE.union(CheckedTypes::VIDEO_FFMPEG), VIDEO_FILES_EXTENSIONS),
+];
 
 impl BrokenFiles {
     pub fn new(params: BrokenFilesParameters) -> Self {
@@ -54,218 +76,6 @@ impl BrokenFiles {
         ControlFlow::Continue(())
     }
 
-    fn check_broken_image(mut file_entry: BrokenEntry) -> BrokenEntry {
-        let error = match image::open(&file_entry.path) {
-            Ok(img) => {
-                if img.width() == 0 || img.height() == 0 {
-                    Some("Image has zero width or height".to_string())
-                } else {
-                    None
-                }
-            }
-            Err(e) => Some(normalize_error_string(&e.to_string())),
-        };
-        file_entry.errors.insert(CheckedTypesSingle::Image, error);
-        file_entry
-    }
-
-    fn check_broken_zip(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let error = match zip::ZipArchive::new(file) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_7z(mut file_entry: BrokenEntry) -> BrokenEntry {
-        let error = match sevenz_rust2::Archive::open(&file_entry.path) {
-            Err(sevenz_rust2::Error::PasswordRequired) | Ok(_) => None,
-            Err(e) => Some(normalize_error_string(&e.to_string())),
-        };
-        file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-        file_entry
-    }
-
-    fn check_broken_gz(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let mut decoder = flate2::read::GzDecoder::new(file);
-                let error = match std::io::copy(&mut decoder, &mut std::io::sink()) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_zst(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let error = match ruzstd::decoding::StreamingDecoder::new(file) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(mut decoder) => match std::io::copy(&mut decoder, &mut std::io::sink()) {
-                        Err(e) => Some(normalize_error_string(&e.to_string())),
-                        Ok(_) => None,
-                    },
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_tar(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let mut archive = tar::Archive::new(file);
-                let error = match archive.entries() {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(entries) => {
-                        let mut err: Option<String> = None;
-                        for entry in entries {
-                            if let Err(e) = entry {
-                                err = Some(normalize_error_string(&e.to_string()));
-                                break;
-                            }
-                        }
-                        err
-                    }
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-    fn check_broken_json(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read(&file_entry.path) {
-            Ok(data) => {
-                let error = match serde_json::from_slice::<serde_json::Value>(&data) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Markup, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_xml(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read(&file_entry.path) {
-            Ok(data) => {
-                let mut reader = quick_xml::Reader::from_reader(data.as_slice());
-                reader.config_mut().check_end_names = true;
-                let error = loop {
-                    match reader.read_event() {
-                        Err(e) => break Some(normalize_error_string(&e.to_string())),
-                        Ok(quick_xml::events::Event::Eof) => break None,
-                        Ok(_) => {}
-                    }
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Markup, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_toml(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read_to_string(&file_entry.path) {
-            Ok(text) => {
-                let error = match toml::from_str::<toml::Table>(&text) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Markup, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_yaml(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read_to_string(&file_entry.path) {
-            Ok(text) => {
-                let error = match yaml_rust2::YamlLoader::load_from_str(&text) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Markup, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_svg(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read(&file_entry.path) {
-            Ok(data) => {
-                let error = match usvg::Tree::from_data(&data, &usvg::Options::default()) {
-                    Err(e) => Some(normalize_error_string(&format!("{e:?}"))),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Markup, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_bz2(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let mut decoder = bzip2::read::MultiBzDecoder::new(file);
-                let error = match std::io::copy(&mut decoder, &mut std::io::sink()) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_xz(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match File::open(&file_entry.path) {
-            Ok(file) => {
-                let mut reader = std::io::BufReader::new(file);
-                let error = match lzma_rs::xz_decompress(&mut reader, &mut std::io::sink()) {
-                    Err(e) => Some(normalize_error_string(&e.to_string())),
-                    Ok(()) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Archive, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
-    fn check_broken_font(mut file_entry: BrokenEntry) -> Option<BrokenEntry> {
-        match std::fs::read(&file_entry.path) {
-            Ok(data) => {
-                let error = match ttf_parser::Face::parse(&data, 0) {
-                    Err(e) => Some(normalize_error_string(&format!("{e:?}"))),
-                    Ok(_) => None,
-                };
-                file_entry.errors.insert(CheckedTypesSingle::Font, error);
-                Some(file_entry)
-            }
-            Err(_inspected) => None,
-        }
-    }
-
     fn check_broken_audio(mut file_entry: BrokenEntry, stop_flag: &Arc<AtomicBool>) -> Option<Option<BrokenEntry>> {
         match File::open(&file_entry.path) {
             Ok(file) => {
@@ -280,18 +90,6 @@ impl BrokenFiles {
             Err(_inspected) => Some(None),
         }
     }
-    fn check_broken_pdf(mut file_entry: BrokenEntry) -> BrokenEntry {
-        let error = match File::open(&file_entry.path) {
-            Ok(file) => match Document::load_from(file) {
-                Err(e) => Some(normalize_error_string(&e.to_string())),
-                Ok(_) => None,
-            },
-            Err(e) => Some(normalize_error_string(&e.to_string())),
-        };
-        file_entry.errors.insert(CheckedTypesSingle::Pdf, error);
-        file_entry
-    }
-
     fn check_broken_video_ffprobe(mut file_entry: BrokenEntry, stop_flag: &Arc<AtomicBool>) -> Option<BrokenEntry> {
         let ffprobe_errors = [
             ("moov atom not found", Some("broken file structure")),
@@ -427,16 +225,6 @@ impl BrokenFiles {
         }
     }
 
-    #[fun_time(message = "load_cache", level = "debug")]
-    fn load_cache(&mut self) -> (BTreeMap<String, BrokenEntry>, BTreeMap<String, BrokenEntry>, BTreeMap<String, BrokenEntry>) {
-        load_and_split_cache_generalized_by_path(&get_broken_files_cache_file(), mem::take(&mut self.files_to_check), self)
-    }
-
-    #[fun_time(message = "save_to_cache", level = "debug")]
-    fn save_to_cache(&mut self, vec_file_entry: &[BrokenEntry], loaded_hash_map: BTreeMap<String, BrokenEntry>) {
-        save_and_connect_cache_generalized_by_path(&get_broken_files_cache_file(), vec_file_entry, loaded_hash_map, self);
-    }
-
     fn file_type_to_checked_type_single(file_type: TypeOfFile) -> CheckedTypesSingle {
         match file_type {
             TypeOfFile::Image => CheckedTypesSingle::Image,
@@ -465,23 +253,14 @@ impl BrokenFiles {
         let mut file_entry_fallback = file_entry.clone();
 
         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| match file_type {
-            TypeOfFile::Image => Some(Some(Self::check_broken_image(file_entry))),
-            TypeOfFile::ArchiveZip => Some(Self::check_broken_zip(file_entry)),
-            TypeOfFile::Archive7z => Some(Some(Self::check_broken_7z(file_entry))),
-            TypeOfFile::ArchiveGz => Some(Self::check_broken_gz(file_entry)),
-            TypeOfFile::ArchiveTar => Some(Self::check_broken_tar(file_entry)),
-            TypeOfFile::ArchiveZst => Some(Self::check_broken_zst(file_entry)),
-            TypeOfFile::Font => Some(Self::check_broken_font(file_entry)),
-            TypeOfFile::Json => Some(Self::check_broken_json(file_entry)),
-            TypeOfFile::Xml => Some(Self::check_broken_xml(file_entry)),
-            TypeOfFile::Toml => Some(Self::check_broken_toml(file_entry)),
-            TypeOfFile::Yaml => Some(Self::check_broken_yaml(file_entry)),
-            TypeOfFile::Svg => Some(Self::check_broken_svg(file_entry)),
-            TypeOfFile::ArchiveBz2 => Some(Self::check_broken_bz2(file_entry)),
-            TypeOfFile::ArchiveXz => Some(Self::check_broken_xz(file_entry)),
             TypeOfFile::Audio => Self::check_broken_audio(file_entry, stop_flag),
-            TypeOfFile::Pdf => Some(Some(Self::check_broken_pdf(file_entry))),
             TypeOfFile::Video => Self::check_broken_video(file_entry, stop_flag, checked_types).map(Some),
+            // A file that cannot be read is skipped
+            _ => Some(find_content_error(file_type, &file_entry.path).ok().map(|error| {
+                let mut file_entry = file_entry;
+                file_entry.errors.insert(Self::file_type_to_checked_type_single(file_type), error);
+                file_entry
+            })),
         }));
 
         match result {
@@ -502,7 +281,8 @@ impl BrokenFiles {
             return ControlFlow::Continue(());
         }
 
-        let (loaded_hash_map, mut records_already_cached, mut non_cached_files_to_check) = self.load_cache();
+        let (loaded_hash_map, mut records_already_cached, mut non_cached_files_to_check) =
+            load_and_split_cache_generalized_by_path(&get_broken_files_cache_file(), mem::take(&mut self.files_to_check), &mut self.common_data);
 
         let checked_types = self.params.checked_types;
         Self::move_cached_entries_missing_required_checks(&mut records_already_cached, &mut non_cached_files_to_check, checked_types);
@@ -543,7 +323,7 @@ impl BrokenFiles {
         // Just connect loaded results with already calculated
         vec_file_entry.extend(records_already_cached.into_values());
 
-        self.save_to_cache(&vec_file_entry, loaded_hash_map);
+        save_and_connect_cache_generalized_by_path(&get_broken_files_cache_file(), &vec_file_entry, loaded_hash_map, &mut self.common_data);
 
         self.broken_files = vec_file_entry.into_iter().filter(|f| f.has_errors()).collect();
 
@@ -575,45 +355,71 @@ fn check_extension_availability(full_name: &Path) -> Option<TypeOfFile> {
 
     let extension_lowercase = extension_str.to_ascii_lowercase();
 
-    if IMAGE_RS_BROKEN_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Image)
-    } else if ZIP_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveZip)
-    } else if SEVENZ_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Archive7z)
-    } else if GZ_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveGz)
-    } else if TAR_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveTar)
-    } else if ZST_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveZst)
-    } else if FONT_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Font)
-    } else if JSON_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Json)
-    } else if SVG_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Svg)
-    } else if XML_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Xml)
-    } else if TOML_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Toml)
-    } else if YAML_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Yaml)
-    } else if BZ2_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveBz2)
-    } else if XZ_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::ArchiveXz)
-    } else if PDF_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Pdf)
-    } else if AUDIO_FILES_CONTENT_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Audio)
-    } else if VIDEO_FILES_EXTENSIONS.contains(&extension_lowercase.as_str()) {
-        Some(TypeOfFile::Video)
-    } else {
+    let file_type = EXTENSIONS_BY_TYPE
+        .iter()
+        .find(|(_, _, extensions)| extensions.contains(&extension_lowercase.as_str()))
+        .map(|(file_type, _, _)| *file_type);
+    if file_type.is_none() {
         error!("File with unknown extension: \"{}\" - {extension_lowercase}", full_name.to_string_lossy());
         debug_assert!(false, "File with unknown extension - \"{}\" - {extension_lowercase}", full_name.to_string_lossy());
-        None
     }
+    file_type
+}
+
+/// Error found in a file of a type without a dedicated checker, or `Err` when the file cannot be read.
+fn find_content_error(file_type: TypeOfFile, path: &Path) -> io::Result<Option<String>> {
+    Ok(match file_type {
+        TypeOfFile::Image => match image::open(path) {
+            Ok(img) if img.width() == 0 || img.height() == 0 => Some("Image has zero width or height".to_string()),
+            Ok(_) => None,
+            Err(e) => Some(normalize_error_string(&e.to_string())),
+        },
+        TypeOfFile::ArchiveZip => error_of(zip::ZipArchive::new(File::open(path)?)),
+        TypeOfFile::Archive7z => match sevenz_rust2::Archive::open(path) {
+            Err(sevenz_rust2::Error::PasswordRequired) | Ok(_) => None,
+            Err(e) => Some(normalize_error_string(&e.to_string())),
+        },
+        TypeOfFile::ArchiveGz => error_of(io::copy(&mut flate2::read::GzDecoder::new(File::open(path)?), &mut io::sink())),
+        TypeOfFile::ArchiveTar => match tar::Archive::new(File::open(path)?).entries() {
+            Err(e) => Some(normalize_error_string(&e.to_string())),
+            Ok(mut entries) => entries.find_map(Result::err).map(|e| normalize_error_string(&e.to_string())),
+        },
+        TypeOfFile::ArchiveZst => match ruzstd::decoding::StreamingDecoder::new(File::open(path)?) {
+            Err(e) => Some(normalize_error_string(&e.to_string())),
+            Ok(mut decoder) => error_of(io::copy(&mut decoder, &mut io::sink())),
+        },
+        TypeOfFile::ArchiveBz2 => error_of(io::copy(&mut bzip2::read::MultiBzDecoder::new(File::open(path)?), &mut io::sink())),
+        TypeOfFile::ArchiveXz => error_of(lzma_rs::xz_decompress(&mut io::BufReader::new(File::open(path)?), &mut io::sink())),
+        TypeOfFile::Font => ttf_parser::Face::parse(&fs::read(path)?, 0).err().map(|e| normalize_error_string(&format!("{e:?}"))),
+        TypeOfFile::Json => error_of(serde_json::from_slice::<serde_json::Value>(&fs::read(path)?)),
+        TypeOfFile::Xml => {
+            let data = fs::read(path)?;
+            let mut reader = quick_xml::Reader::from_reader(data.as_slice());
+            reader.config_mut().check_end_names = true;
+            loop {
+                match reader.read_event() {
+                    Err(e) => break Some(normalize_error_string(&e.to_string())),
+                    Ok(quick_xml::events::Event::Eof) => break None,
+                    Ok(_) => {}
+                }
+            }
+        }
+        TypeOfFile::Toml => error_of(toml::from_str::<toml::Table>(&fs::read_to_string(path)?)),
+        TypeOfFile::Yaml => error_of(yaml_rust2::YamlLoader::load_from_str(&fs::read_to_string(path)?)),
+        TypeOfFile::Svg => usvg::Tree::from_data(&fs::read(path)?, &usvg::Options::default())
+            .err()
+            .map(|e| normalize_error_string(&format!("{e:?}"))),
+        // An unreadable PDF is reported as broken instead of being skipped
+        TypeOfFile::Pdf => match File::open(path) {
+            Ok(file) => error_of(Document::load_from(file)),
+            Err(e) => Some(normalize_error_string(&e.to_string())),
+        },
+        TypeOfFile::Audio | TypeOfFile::Video => unreachable!("audio and video have dedicated checkers"),
+    })
+}
+
+fn error_of<T, E: Display>(result: Result<T, E>) -> Option<String> {
+    result.err().map(|e| normalize_error_string(&e.to_string()))
 }
 
 pub fn get_broken_files_cache_file() -> String {

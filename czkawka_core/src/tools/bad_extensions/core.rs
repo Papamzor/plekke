@@ -11,6 +11,7 @@ use log::debug;
 use mime_guess::get_mime_extensions;
 use rayon::prelude::*;
 
+use crate::common::fs_ops::rename_all;
 use crate::common::model::{FileEntry, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
@@ -184,28 +185,13 @@ impl BadExtensions {
 
     #[fun_time(message = "fix_bad_extensions", level = "debug")]
     pub fn fix_bad_extensions(&mut self, stop_flag: &Arc<AtomicBool>) {
-        let warnings: Vec<_> = mem::take(&mut self.bad_extensions_files)
-            .into_par_iter()
+        let renames = mem::take(&mut self.bad_extensions_files)
+            .into_iter()
             .map(|entry| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-
                 let new_path = entry.path.with_extension(&entry.proper_extension);
-
-                if new_path.exists() {
-                    return Some(Some(format!("Cannot rename {:?} to {:?}: target file already exists", entry.path, new_path)));
-                }
-
-                match std::fs::rename(&entry.path, &new_path) {
-                    Ok(()) => Some(None),
-                    Err(e) => Some(Some(format!("Failed to rename {:?} to {:?}: {}", entry.path, new_path, e))),
-                }
+                (entry.path, new_path)
             })
-            .while_some()
-            .flatten()
             .collect();
-
-        self.common_data.text_messages.warnings.extend(warnings);
+        self.common_data.text_messages.warnings.extend(rename_all(renames, stop_flag));
     }
 }

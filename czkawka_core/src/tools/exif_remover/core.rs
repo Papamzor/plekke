@@ -78,7 +78,7 @@ impl ExifRemover {
         progress_sender: Option<&Sender<ProgressData>>,
     ) -> (BTreeMap<String, ExifEntry>, BTreeMap<String, ExifEntry>, BTreeMap<String, ExifEntry>) {
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::ExifRemover(ExifRemoverStage::LoadingCache(CacheLoadPhase::Loading)), 0, 0);
-        let res = load_and_split_cache_generalized_by_path(&get_exif_remover_cache_file(), mem::take(&mut self.files_to_check), self);
+        let res = load_and_split_cache_generalized_by_path(&get_exif_remover_cache_file(), mem::take(&mut self.files_to_check), &mut self.common_data);
 
         progress_handler.join_thread();
         res
@@ -94,7 +94,7 @@ impl ExifRemover {
     ) {
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::ExifRemover(ExifRemoverStage::SavingCache), 0, 0);
 
-        save_and_connect_cache_generalized_by_path(&get_exif_remover_cache_file(), vec_file_entry, loaded_hash_map, self);
+        save_and_connect_cache_generalized_by_path(&get_exif_remover_cache_file(), vec_file_entry, loaded_hash_map, &mut self.common_data);
 
         progress_handler.join_thread();
     }

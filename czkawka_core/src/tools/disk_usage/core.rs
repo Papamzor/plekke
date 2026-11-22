@@ -9,8 +9,7 @@ use crate::common::model::{CheckingMethod, ToolType};
 use crate::common::progress_data::{ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
-use crate::tools::disk_usage::scan::portable::PortableSource;
-use crate::tools::disk_usage::scan::{ScanContext, TreeSource};
+use crate::tools::disk_usage::scan::{ScanContext, scan};
 use crate::tools::disk_usage::tree::{DiskNode, DiskTree, NodeKind};
 use crate::tools::disk_usage::{DiskUsage, DiskUsageParameters, Info};
 
@@ -39,7 +38,7 @@ impl DiskUsage {
             ignore_excluded_items: self.params.ignore_excluded_items,
             ignore_excluded_directories: self.params.ignore_excluded_directories,
         };
-        let tree = PortableSource.scan(&roots, &context);
+        let tree = scan(&roots, &context);
         progress_handler.join_thread();
 
         self.information = count_entries(&tree);

@@ -10,7 +10,8 @@ use fun_time::fun_time;
 use crate::common::consts::{AUDIO_FILES_CONTENT_EXTENSIONS, AUDIO_FILES_TAGS_EXTENSIONS};
 use crate::common::model::CheckingMethod;
 use crate::common::progress_data::ProgressData;
-use crate::common::tool_data::{CommonData, DeleteItemType, DeleteMethod, impl_common_data};
+use crate::common::reference_groups::{GroupHeaders, delete_reference_groups, save_reference_groups_as_json, write_reference_groups};
+use crate::common::tool_data::{CommonData, impl_common_data};
 use crate::common::traits::{PrintResults, Search};
 use crate::flc;
 use crate::tools::same_music::core::format_audio_duration;
@@ -30,7 +31,6 @@ impl Search for SameMusic {
             if self.prepare_items(Some(audio_extensions)).is_err() {
                 return ControlFlow::Continue(());
             }
-            self.common_data.use_reference_folders = !self.common_data.directories.reference_directories.is_empty() || !self.common_data.directories.reference_files.is_empty();
             self.check_files(stop_flag, progress_sender)?;
             match self.params.check_type {
                 CheckingMethod::AudioTags => {
@@ -62,40 +62,24 @@ impl Search for SameMusic {
 impl PrintResults for SameMusic {
     fn write_results<T: Write>(&self, writer: &mut T) -> std::io::Result<()> {
         self.write_base_search_paths(writer)?;
-        if !self.duplicated_music_entries.is_empty() {
-            writeln!(writer, "{} music files which have similar friends\n\n.", self.duplicated_music_entries.len())?;
-
-            for vec_file_entry in &self.duplicated_music_entries {
-                writeln!(writer, "Found {} music files which have similar friends", vec_file_entry.len())?;
-                for file_entry in vec_file_entry {
-                    write_music_entry(writer, file_entry)?;
-                }
-                writeln!(writer)?;
-            }
-        } else if !self.duplicated_music_entries_referenced.is_empty() {
-            writeln!(writer, "{} music files which have similar friends\n\n.", self.duplicated_music_entries_referenced.len())?;
-            for (file_entry, vec_file_entry) in &self.duplicated_music_entries_referenced {
-                writeln!(writer, "Found {} music files which have similar friends", vec_file_entry.len())?;
-                writeln!(writer)?;
-                write_music_entry(writer, file_entry)?;
-                for file_entry in vec_file_entry {
-                    write_music_entry(writer, file_entry)?;
-                }
-                writeln!(writer)?;
-            }
-        } else {
-            write!(writer, "Not found any similar music files.")?;
-        }
-
-        Ok(())
+        let headers = GroupHeaders {
+            plain_summary: " music files which have similar friends\n\n.\n",
+            referenced_summary: " music files which have similar friends\n\n.\n",
+            plain_group: " music files which have similar friends",
+            referenced_group: " music files which have similar friends",
+            not_found: "Not found any similar music files.",
+        };
+        write_reference_groups(
+            writer,
+            &self.duplicated_music_entries,
+            &self.duplicated_music_entries_referenced,
+            &headers,
+            write_music_entry,
+        )
     }
 
     fn save_results_to_file_as_json(&self, file_name: &str, pretty_print: bool) -> std::io::Result<()> {
-        if self.get_use_reference_folders() {
-            self.save_results_to_file_as_json_internal(file_name, &self.duplicated_music_entries_referenced, pretty_print)
-        } else {
-            self.save_results_to_file_as_json_internal(file_name, &self.duplicated_music_entries, pretty_print)
-        }
+        save_reference_groups_as_json(self, file_name, &self.duplicated_music_entries, &self.duplicated_music_entries_referenced, pretty_print)
     }
 }
 
@@ -126,14 +110,12 @@ impl_common_data! {
 impl SameMusic {
     #[fun_time(message = "delete_files", level = "debug")]
     pub fn delete_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        if self.get_cd().delete_method == DeleteMethod::None {
-            return ControlFlow::Continue(());
-        }
-        if self.get_use_reference_folders() {
-            let files_to_delete: Vec<_> = self.duplicated_music_entries_referenced.iter().flat_map(|(_, files)| files.iter().cloned()).collect();
-            return self.delete_simple_elements_and_add_to_messages(stop_flag, progress_sender, DeleteItemType::DeletingFiles(files_to_delete));
-        }
-        let files_to_delete = self.duplicated_music_entries.clone();
-        self.delete_advanced_elements_and_add_to_messages(stop_flag, progress_sender, files_to_delete)
+        delete_reference_groups(
+            &mut self.common_data,
+            stop_flag,
+            progress_sender,
+            &self.duplicated_music_entries,
+            &self.duplicated_music_entries_referenced,
+        )
     }
 }

@@ -13,7 +13,7 @@ use crate::common::model::CheckingMethod;
 use crate::common::progress_data::ProgressData;
 use crate::common::tool_data::{CommonData, DeleteItemType, DeleteMethod, impl_common_data};
 use crate::common::traits::{PrintResults, Search};
-use crate::tools::duplicate::{DuplicateFinder, DuplicateFinderParameters, Info};
+use crate::tools::duplicate::{DuplicateEntry, DuplicateFinder, DuplicateFinderParameters, Info};
 
 impl DuplicateFinder {
     #[fun_time(message = "delete_files", level = "debug")]
@@ -80,7 +80,6 @@ impl Search for DuplicateFinder {
             if self.prepare_items(None).is_err() {
                 return ControlFlow::Continue(());
             }
-            self.common_data.use_reference_folders = !self.common_data.directories.reference_directories.is_empty() || !self.common_data.directories.reference_files.is_empty();
 
             match self.get_params().check_method {
                 CheckingMethod::Name => self.check_files_name(stop_flag, progress_sender)?,
@@ -104,179 +103,81 @@ impl PrintResults for DuplicateFinder {
     fn write_results<T: Write>(&self, writer: &mut T) -> io::Result<()> {
         self.write_base_search_paths(writer)?;
 
-        match self.get_params().check_method {
+        let info = &self.information;
+        match self.params.check_method {
             CheckingMethod::Name => {
-                if !self.files_with_identical_names.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same names-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} files in {} groups with same name(may have different content)",
-                        self.information.number_of_duplicated_files_by_name, self.information.number_of_groups_by_name,
-                    )?;
-                    for (name, vector) in self.files_with_identical_names.iter().rev() {
-                        writeln!(writer, "Name - {} - {} files ", name, vector.len())?;
-                        for j in vector {
-                            writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
-                        }
-                        writeln!(writer)?;
-                    }
-                } else if !self.files_with_identical_names_referenced.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same names in referenced folders-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} files in {} groups with same name(may have different content)",
-                        self.information.number_of_duplicated_files_by_name, self.information.number_of_groups_by_name,
-                    )?;
-                    for (name, (file_entry, vector)) in self.files_with_identical_names_referenced.iter().rev() {
-                        writeln!(writer, "Name - {} - {} files ", name, vector.len())?;
-                        writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
-                        for j in vector {
-                            writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
-                        }
-                        writeln!(writer)?;
-                    }
+                let groups: Vec<_> = if self.files_with_identical_names.is_empty() {
+                    self.files_with_identical_names_referenced
+                        .iter()
+                        .rev()
+                        .map(|(name, (reference, files))| (name, Some(reference), files))
+                        .collect()
                 } else {
-                    write!(writer, "Not found any files with same names.")?;
-                }
+                    self.files_with_identical_names.iter().rev().map(|(name, files)| (name, None, files)).collect()
+                };
+                let summary = format!(
+                    "Found {} files in {} groups with same name(may have different content)",
+                    info.number_of_duplicated_files_by_name, info.number_of_groups_by_name
+                );
+                let headers = ("Files with same names", summary.as_str(), "Not found any files with same names.");
+                write_groups(writer, headers, groups, true, |writer, name, count, _| writeln!(writer, "Name - {name} - {count} files "))
             }
             CheckingMethod::SizeName => {
-                if !self.files_with_identical_size_names.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same size and names-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} files in {} groups with same size and name(may have different content)",
-                        self.information.number_of_duplicated_files_by_size_name, self.information.number_of_groups_by_size_name,
-                    )?;
-                    for ((size, name), vector) in self.files_with_identical_size_names.iter().rev() {
-                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, DECIMAL), vector.len())?;
-                        for j in vector {
-                            writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
-                        }
-                        writeln!(writer)?;
-                    }
-                } else if !self.files_with_identical_size_names_referenced.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same size and names in referenced folders-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} files in {} groups with same size and name(may have different content)",
-                        self.information.number_of_duplicated_files_by_size_name, self.information.number_of_groups_by_size_name,
-                    )?;
-                    for ((size, name), (file_entry, vector)) in self.files_with_identical_size_names_referenced.iter().rev() {
-                        writeln!(writer, "Name - {}, {} - {} files ", name, format_size(*size, DECIMAL), vector.len())?;
-                        writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
-                        for j in vector {
-                            writeln!(writer, "\"{}\"", j.path.to_string_lossy())?;
-                        }
-                        writeln!(writer)?;
-                    }
+                let groups: Vec<_> = if self.files_with_identical_size_names.is_empty() {
+                    let referenced = self.files_with_identical_size_names_referenced.iter().rev();
+                    referenced.map(|(size_name, (reference, files))| (size_name, Some(reference), files)).collect()
                 } else {
-                    write!(writer, "Not found any files with same size and names.")?;
-                }
+                    self.files_with_identical_size_names
+                        .iter()
+                        .rev()
+                        .map(|(size_name, files)| (size_name, None, files))
+                        .collect()
+                };
+                let summary = format!(
+                    "Found {} files in {} groups with same size and name(may have different content)",
+                    info.number_of_duplicated_files_by_size_name, info.number_of_groups_by_size_name
+                );
+                let headers = ("Files with same size and names", summary.as_str(), "Not found any files with same size and names.");
+                write_groups(writer, headers, groups, true, |writer, (size, name), count, _| {
+                    writeln!(writer, "Name - {name}, {} - {count} files ", format_size(*size, DECIMAL))
+                })
             }
             CheckingMethod::Size => {
-                if !self.files_with_identical_size.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same size-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} duplicated files which in {} groups which takes {}.",
-                        self.information.number_of_duplicated_files_by_size,
-                        self.information.number_of_groups_by_size,
-                        format_size(self.information.lost_space_by_size, DECIMAL)
-                    )?;
-                    for (size, vector) in self.files_with_identical_size.iter().rev() {
-                        write!(writer, "\n---- Size {} ({}) - {} files \n", format_size(*size, DECIMAL), size, vector.len())?;
-                        for file_entry in vector {
-                            writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
-                        }
-                    }
-                } else if !self.files_with_identical_size_referenced.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same size in referenced folders-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} duplicated files which in {} groups which takes {}.",
-                        self.information.number_of_duplicated_files_by_size,
-                        self.information.number_of_groups_by_size,
-                        format_size(self.information.lost_space_by_size, DECIMAL)
-                    )?;
-                    for (size, (file_entry, vector)) in self.files_with_identical_size_referenced.iter().rev() {
-                        writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
-                        writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
-                        for file_entry in vector {
-                            writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
-                        }
-                    }
+                let groups: Vec<_> = if self.files_with_identical_size.is_empty() {
+                    self.files_with_identical_size_referenced
+                        .iter()
+                        .rev()
+                        .map(|(size, (reference, files))| (size, Some(reference), files))
+                        .collect()
                 } else {
-                    write!(writer, "Not found any duplicates.")?;
-                }
+                    self.files_with_identical_size.iter().rev().map(|(size, files)| (size, None, files)).collect()
+                };
+                let summary = lost_space_summary(info.number_of_duplicated_files_by_size, info.number_of_groups_by_size, info.lost_space_by_size);
+                let headers = ("Files with same size", summary.as_str(), "Not found any duplicates.");
+                // The plain variant keeps its historical trailing space
+                write_groups(writer, headers, groups, false, |writer, size, count, referenced| {
+                    let space = if referenced { "" } else { " " };
+                    writeln!(writer, "\n---- Size {} ({size}) - {count} files{space}", format_size(*size, DECIMAL))
+                })
             }
             CheckingMethod::Hash => {
-                if !self.files_with_identical_hashes.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same hashes-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} duplicated files which in {} groups which takes {}.",
-                        self.information.number_of_duplicated_files_by_hash,
-                        self.information.number_of_groups_by_hash,
-                        format_size(self.information.lost_space_by_hash, DECIMAL)
-                    )?;
-                    for (size, vectors_vector) in self.files_with_identical_hashes.iter().rev() {
-                        for vector in vectors_vector {
-                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
-                            for file_entry in vector {
-                                writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
-                            }
-                        }
-                    }
-                } else if !self.files_with_identical_hashes_referenced.is_empty() {
-                    writeln!(
-                        writer,
-                        "-------------------------------------------------Files with same hashes in referenced folders-------------------------------------------------"
-                    )?;
-                    writeln!(
-                        writer,
-                        "Found {} duplicated files which in {} groups which takes {}.",
-                        self.information.number_of_duplicated_files_by_hash,
-                        self.information.number_of_groups_by_hash,
-                        format_size(self.information.lost_space_by_hash, DECIMAL)
-                    )?;
-                    for (size, vectors_vector) in self.files_with_identical_hashes_referenced.iter().rev() {
-                        for (file_entry, vector) in vectors_vector {
-                            writeln!(writer, "\n---- Size {} ({}) - {} files", format_size(*size, DECIMAL), size, vector.len())?;
-                            writeln!(writer, "Reference file - \"{}\"", file_entry.path.to_string_lossy())?;
-                            for file_entry in vector {
-                                writeln!(writer, "\"{}\"", file_entry.path.to_string_lossy())?;
-                            }
-                        }
-                    }
+                let groups: Vec<_> = if self.files_with_identical_hashes.is_empty() {
+                    let referenced = self.files_with_identical_hashes_referenced.iter().rev();
+                    referenced
+                        .flat_map(|(size, groups)| groups.iter().map(move |(reference, files)| (size, Some(reference), files)))
+                        .collect()
                 } else {
-                    write!(writer, "Not found any duplicates.")?;
-                }
+                    let groups = self.files_with_identical_hashes.iter().rev();
+                    groups.flat_map(|(size, groups)| groups.iter().map(move |files| (size, None, files))).collect()
+                };
+                let summary = lost_space_summary(info.number_of_duplicated_files_by_hash, info.number_of_groups_by_hash, info.lost_space_by_hash);
+                let headers = ("Files with same hashes", summary.as_str(), "Not found any duplicates.");
+                write_groups(writer, headers, groups, false, |writer, size, count, _| {
+                    writeln!(writer, "\n---- Size {} ({size}) - {count} files", format_size(*size, DECIMAL))
+                })
             }
             _ => panic!(),
         }
-
-        Ok(())
     }
 
     // TODO - check if is possible to save also data in header about size and name in SizeName mode - https://github.com/qarmin/czkawka/issues/1137
@@ -320,4 +221,40 @@ impl_common_data! {
         };
         found > 0
     }
+}
+
+fn lost_space_summary(files: usize, groups: usize, lost_space: u64) -> String {
+    format!("Found {files} duplicated files which in {groups} groups which takes {}.", format_size(lost_space, DECIMAL))
+}
+
+/// Writes one check method's groups (reference file first in reference-folder mode).
+/// `headers` is (title, summary, not found message); `group_header` gets (key, number of files, referenced).
+fn write_groups<W: Write, K>(
+    writer: &mut W,
+    (title, summary, not_found): (&str, &str, &str),
+    groups: Vec<(K, Option<&DuplicateEntry>, &Vec<DuplicateEntry>)>,
+    blank_line_after_group: bool,
+    mut group_header: impl FnMut(&mut W, K, usize, bool) -> io::Result<()>,
+) -> io::Result<()> {
+    const DASHES: &str = "-------------------------------------------------";
+    let Some((_, first_reference, _)) = groups.first() else {
+        return write!(writer, "{not_found}");
+    };
+    let referenced = first_reference.is_some();
+    let title_suffix = if referenced { " in referenced folders" } else { "" };
+    writeln!(writer, "{DASHES}{title}{title_suffix}{DASHES}")?;
+    writeln!(writer, "{summary}")?;
+    for (key, reference, files) in groups {
+        group_header(writer, key, files.len(), referenced)?;
+        if let Some(reference) = reference {
+            writeln!(writer, "Reference file - \"{}\"", reference.path.to_string_lossy())?;
+        }
+        for file in files {
+            writeln!(writer, "\"{}\"", file.path.to_string_lossy())?;
+        }
+        if blank_line_after_group {
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
 }

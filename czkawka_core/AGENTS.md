@@ -80,7 +80,7 @@ disk_usage/
 ├── mod.rs, core.rs, traits.rs   # DiskUsage: Search, CommonData, PrintResults; Info, DiskUsageParameters
 ├── tree.rs                      # DiskTree/DiskNode: compact size tree, NodeAddress, remove() keeps sizes right
 ├── category.rs                  # FileCategory (by extension, optionally by content via infer)
-├── scan/                        # TreeSource backend trait + portable rayon backend (room for an NTFS MFT one)
+├── scan.rs                      # Portable rayon walk that builds the size tree
 ├── layout/                      # Layout::build: treemap (binary split), sunburst -> same LayoutItem list, hit_test;
 │                                #   entries too small to see become one "omitted" block per directory
 └── report.rs                    # Depth/width-limited text and JSON used by czkawka_cli

@@ -15,7 +15,6 @@ use crate::common::model::{CheckingMethod, FileEntry, HashType, ToolType};
 use crate::common::progress_data::{CacheLoadPhase, DuplicateStage, ProgressData, ToolStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::{CommonData, CommonToolData};
-use crate::common::traits::ResultEntry;
 use crate::tools::duplicate::{
     DuplicateEntry, DuplicateFinder, DuplicateFinderParameters, Info, PREHASHING_BUFFER_SIZE, THREAD_BUFFER, filter_hard_links, hash_calculation, hash_calculation_limit,
 };
@@ -39,23 +38,8 @@ impl DuplicateFinder {
 
     #[fun_time(message = "check_files_name", level = "debug")]
     pub(crate) fn check_files_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let group_by_func = if self.get_params().case_sensitive_name_comparison {
-            |fe: &FileEntry| {
-                fe.path
-                    .file_name()
-                    .unwrap_or_else(|| panic!("Found invalid file_name \"{}\" (cannot panic, because it is always normal file)", fe.path.to_string_lossy()))
-                    .to_string_lossy()
-                    .to_string()
-            }
-        } else {
-            |fe: &FileEntry| {
-                fe.path
-                    .file_name()
-                    .unwrap_or_else(|| panic!("Found invalid file_name \"{}\" (cannot panic, because it is always normal file)", fe.path.to_string_lossy()))
-                    .to_string_lossy()
-                    .to_lowercase()
-            }
-        };
+        let case_sensitive = self.params.case_sensitive_name_comparison;
+        let group_by_func = move |fe: &FileEntry| name_key(fe, case_sensitive);
 
         let grouped_file_entries = self
             .common_data
@@ -104,29 +88,8 @@ impl DuplicateFinder {
 
     #[fun_time(message = "check_files_size_name", level = "debug")]
     pub(crate) fn check_files_size_name(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        let group_by_func = if self.get_params().case_sensitive_name_comparison {
-            |fe: &FileEntry| {
-                (
-                    fe.size,
-                    fe.path
-                        .file_name()
-                        .unwrap_or_else(|| panic!("Found invalid file_name \"{}\" (cannot panic, because it is always normal file)", fe.path.to_string_lossy()))
-                        .to_string_lossy()
-                        .to_string(),
-                )
-            }
-        } else {
-            |fe: &FileEntry| {
-                (
-                    fe.size,
-                    fe.path
-                        .file_name()
-                        .unwrap_or_else(|| panic!("Found invalid file_name \"{}\" (cannot panic, because it is always normal file)", fe.path.to_string_lossy()))
-                        .to_string_lossy()
-                        .to_lowercase(),
-                )
-            }
-        };
+        let case_sensitive = self.params.case_sensitive_name_comparison;
+        let group_by_func = move |fe: &FileEntry| (fe.size, name_key(fe, case_sensitive));
 
         let grouped_file_entries = self
             .common_data
@@ -276,16 +239,6 @@ impl DuplicateFinder {
         }
     }
 
-    #[fun_time(message = "prehash_load_cache_at_start", level = "debug")]
-    fn prehash_load_cache_at_start(&mut self) -> (BTreeMap<u64, Vec<DuplicateEntry>>, BTreeMap<u64, Vec<DuplicateEntry>>, BTreeMap<u64, Vec<DuplicateEntry>>) {
-        load_and_split_cache_generalized_by_size(
-            &get_duplicate_cache_file(self.get_params().hash_type, true),
-            self.get_params().use_prehash_cache,
-            mem::take(&mut self.files_with_identical_size),
-            self,
-        )
-    }
-
     #[fun_time(message = "prehash_save_cache_at_exit", level = "debug")]
     fn prehash_save_cache_at_exit(&mut self, loaded_hash_map: BTreeMap<u64, Vec<DuplicateEntry>>, combined: &BTreeMap<u64, BTreeMap<String, Vec<DuplicateEntry>>>) {
         if self.get_params().use_prehash_cache {
@@ -333,7 +286,12 @@ impl DuplicateFinder {
         let check_type = self.get_params().hash_type;
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::Duplicate(DuplicateStage::LoadingPreHashCache(CacheLoadPhase::Loading)), 0, 0);
 
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.prehash_load_cache_at_start();
+        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = load_and_split_cache_generalized_by_size(
+            &get_duplicate_cache_file(self.params.hash_type, true),
+            self.params.use_prehash_cache,
+            mem::take(&mut self.files_with_identical_size),
+            &mut self.common_data,
+        );
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
@@ -433,19 +391,6 @@ impl DuplicateFinder {
         ControlFlow::Continue(())
     }
 
-    #[fun_time(message = "full_hashing_load_cache_at_start", level = "debug")]
-    fn full_hashing_load_cache_at_start(
-        &mut self,
-        pre_checked_map: BTreeMap<u64, Vec<DuplicateEntry>>,
-    ) -> (BTreeMap<u64, Vec<DuplicateEntry>>, BTreeMap<u64, Vec<DuplicateEntry>>, BTreeMap<u64, Vec<DuplicateEntry>>) {
-        load_and_split_cache_generalized_by_size(
-            &get_duplicate_cache_file(self.get_params().hash_type, false),
-            self.common_data.use_cache,
-            pre_checked_map,
-            self,
-        )
-    }
-
     #[fun_time(message = "full_hashing_save_cache_at_exit", level = "debug")]
     fn full_hashing_save_cache_at_exit(
         &mut self,
@@ -510,7 +455,12 @@ impl DuplicateFinder {
 
         let progress_handler = prepare_thread_handler_common(progress_sender, ToolStage::Duplicate(DuplicateStage::LoadingHashCache(CacheLoadPhase::Loading)), 0, 0);
 
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.full_hashing_load_cache_at_start(pre_checked_map);
+        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = load_and_split_cache_generalized_by_size(
+            &get_duplicate_cache_file(self.params.hash_type, false),
+            self.common_data.use_cache,
+            pre_checked_map,
+            &mut self.common_data,
+        );
 
         progress_handler.join_thread();
         if check_if_stop_received(stop_flag) {
@@ -588,33 +538,11 @@ impl DuplicateFinder {
     fn hash_reference_folders(&mut self) {
         // Reference - only use in size, because later hash will be counted differently
         if self.common_data.use_reference_folders {
-            let vec = mem::take(&mut self.files_with_identical_hashes)
-                .into_values()
-                .filter_map(|vec_vec_file_entry| {
-                    let mut all_results_with_same_size = Vec::new();
-                    for vec_file_entry in vec_vec_file_entry {
-                        let (mut files_from_referenced_folders, normal_files): (Vec<_>, Vec<_>) = vec_file_entry
-                            .into_iter()
-                            .partition(|e| self.common_data.directories.is_in_referenced_directory(e.get_path()));
-
-                        if normal_files.is_empty() {
-                            continue;
-                        }
-                        if let Some(file) = files_from_referenced_folders.pop() {
-                            all_results_with_same_size.push((file, normal_files));
-                        }
-                    }
-                    if all_results_with_same_size.is_empty() {
-                        None
-                    } else {
-                        Some(all_results_with_same_size)
-                    }
-                })
-                .collect::<Vec<Vec<(DuplicateEntry, Vec<DuplicateEntry>)>>>();
-            #[expect(clippy::indexing_slicing)] // Safe, because here, empty vectors cannot exist
-            for vec_of_vec in vec {
-                self.files_with_identical_hashes_referenced.insert(vec_of_vec[0].0.size, vec_of_vec);
-            }
+            let referenced = mem::take(&mut self.files_with_identical_hashes).into_iter().filter_map(|(size, groups)| {
+                let groups = self.common_data.directories.filter_reference_folders(groups);
+                (!groups.is_empty()).then_some((size, groups))
+            });
+            self.files_with_identical_hashes_referenced.extend(referenced);
         }
 
         if self.common_data.use_reference_folders {
@@ -661,4 +589,14 @@ pub fn get_duplicate_cache_file(type_of_hash: HashType, is_prehash: bool) -> Str
     } else {
         format!("cache_duplicates_{type_of_hash:?}_{CACHE_DUPLICATE_VERSION}.bin")
     }
+}
+
+/// Grouping key for the name-based modes.
+fn name_key(fe: &FileEntry, case_sensitive: bool) -> String {
+    let name = fe
+        .path
+        .file_name()
+        .unwrap_or_else(|| panic!("Found invalid file_name \"{}\" (cannot panic, because it is always normal file)", fe.path.to_string_lossy()))
+        .to_string_lossy();
+    if case_sensitive { name.to_string() } else { name.to_lowercase() }
 }

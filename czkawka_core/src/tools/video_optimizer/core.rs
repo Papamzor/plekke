@@ -1,23 +1,25 @@
 use std::collections::BTreeMap;
 use std::mem;
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crossbeam_channel::Sender;
 use fun_time::fun_time;
-use log::{debug, info};
+use log::info;
 use rayon::prelude::*;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::common::cache::{load_and_split_cache_generalized_by_path, save_and_connect_cache_generalized_by_path};
-use crate::common::config_cache_path::get_config_cache_path;
 use crate::common::model::ToolType;
 use crate::common::progress_data::{ProgressData, ToolStage, VideoOptimizerStage};
 use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
 use crate::common::tool_data::CommonToolData;
-use crate::common::video_utils::{VIDEO_THUMBNAILS_SUBFOLDER, generate_thumbnail};
+use crate::common::video_utils::{ThumbnailEntry, generate_thumbnails};
 use crate::tools::video_optimizer::{
-    Info, VideoCropEntry, VideoCropParams, VideoCropSingleFixParams, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters, VideoTranscodeEntry, VideoTranscodeParams,
+    Info, VideoCropEntry, VideoCropParams, VideoCropSingleFixParams, VideoOptimizer, VideoOptimizerFixParams, VideoOptimizerParameters, VideoTranscodeEntry,
 };
 
 mod video_converter;
@@ -29,6 +31,30 @@ pub use video_cropper::fix_video_crop;
 use crate::common::cache::CACHE_VIDEO_OPTIMIZE_VERSION;
 use crate::common::traits::ResultEntry;
 use crate::flc;
+
+/// Entry checked by one of the optimizer modes.
+trait CheckedVideo: ThumbnailEntry + Serialize + DeserializeOwned + Clone + Sync {
+    fn error(&self) -> Option<&String>;
+}
+
+macro_rules! impl_checked_video {
+    ($($entry:ty),+) => {$(
+        impl ThumbnailEntry for $entry {
+            fn duration(&self) -> Option<f64> {
+                Some(self.duration)
+            }
+            fn set_thumbnail_path(&mut self, thumbnail_path: PathBuf) {
+                self.thumbnail_path = Some(thumbnail_path);
+            }
+        }
+        impl CheckedVideo for $entry {
+            fn error(&self) -> Option<&String> {
+                self.error.as_ref()
+            }
+        }
+    )+};
+}
+impl_checked_video!(VideoTranscodeEntry, VideoCropEntry);
 
 impl VideoOptimizer {
     pub fn new(params: VideoOptimizerParameters) -> Self {
@@ -67,283 +93,41 @@ impl VideoOptimizer {
 
     #[fun_time(message = "check_files", level = "debug")]
     pub(crate) fn check_files(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
+        let thumbnail_stage = ToolStage::VideoOptimizer(VideoOptimizerStage::CreatingThumbnails);
+        let thumbnail_settings = self.params.thumbnail_settings();
+        let cd = &mut self.common_data;
         match self.params.clone() {
-            VideoOptimizerParameters::VideoTranscode(params) => self.process_video_transcode(stop_flag, progress_sender, params),
-            VideoOptimizerParameters::VideoCrop(_) => self.process_video_crop(stop_flag, progress_sender),
-        }
-    }
-
-    #[fun_time(message = "process_video_transcode", level = "debug")]
-    fn process_video_transcode(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>, params: VideoTranscodeParams) -> ControlFlow<()> {
-        if self.video_transcode_test_entries.is_empty() {
-            return ControlFlow::Continue(());
-        }
-
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_video_transcode_cache();
-
-        let progress_handler = prepare_thread_handler_common(
-            progress_sender,
-            ToolStage::VideoOptimizer(VideoOptimizerStage::ProcessingVideos),
-            non_cached_files_to_check.len(),
-            non_cached_files_to_check.values().map(|entry| entry.size).sum(),
-        );
-
-        let mut entries: Vec<VideoTranscodeEntry> = non_cached_files_to_check
-            .into_par_iter()
-            .map(|(_path, entry)| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-                let size = entry.size;
-                let res = video_converter::check_video(entry);
-                progress_handler.increase_items(1);
-                progress_handler.increase_size(size);
-                Some(res)
-            })
-            .while_some()
-            .collect();
-
-        self.common_data.text_messages.warnings.extend(entries.iter().filter_map(|e| e.error.as_ref()).cloned());
-        entries.extend(records_already_cached.into_values());
-
-        progress_handler.join_thread();
-
-        self.save_video_transcode_cache(&entries, loaded_hash_map);
-
-        entries.retain(|e| e.error.is_none() && !params.excluded_codecs.contains(&e.codec));
-
-        self.video_transcode_result_entries = entries;
-        self.information.number_of_videos_to_transcode = self.video_transcode_result_entries.len();
-
-        self.create_transcode_thumbnails(progress_sender, stop_flag, &params)?;
-
-        ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "process_video_crop", level = "debug")]
-    fn process_video_crop(&mut self, stop_flag: &Arc<AtomicBool>, progress_sender: Option<&Sender<ProgressData>>) -> ControlFlow<()> {
-        if self.video_crop_test_entries.is_empty() {
-            return ControlFlow::Continue(());
-        }
-
-        let VideoOptimizerParameters::VideoCrop(params) = self.params.clone() else {
-            unreachable!("process_video_crop called with non VideoCrop parameters, caller is responsible for that");
-        };
-
-        let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = self.load_video_crop_cache(&params);
-
-        let progress_handler = prepare_thread_handler_common(
-            progress_sender,
-            ToolStage::VideoOptimizer(VideoOptimizerStage::ProcessingVideos),
-            non_cached_files_to_check.len(),
-            non_cached_files_to_check.values().map(|entry| entry.size).sum(),
-        );
-
-        let mut vec_file_entry: Vec<VideoCropEntry> = non_cached_files_to_check
-            .into_par_iter()
-            .map(|(_path, entry)| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-                let size = entry.size;
-                let res = video_cropper::check_video_crop(entry, &params, stop_flag);
-                progress_handler.increase_items(1);
-                progress_handler.increase_size(size);
-                res
-            })
-            .while_some()
-            .collect();
-
-        self.common_data
-            .text_messages
-            .warnings
-            .extend(vec_file_entry.iter().filter_map(|e| e.error.as_ref()).cloned());
-        vec_file_entry.extend(records_already_cached.into_values());
-
-        progress_handler.join_thread();
-
-        self.save_video_crop_cache(&vec_file_entry, &params, loaded_hash_map);
-
-        vec_file_entry.retain(|e| e.error.is_none() && e.new_image_dimensions != (0, 0, 0, 0));
-
-        self.video_crop_result_entries = vec_file_entry;
-        self.information.number_of_videos_to_crop = self.video_crop_result_entries.len();
-
-        self.create_crop_thumbnails(progress_sender, stop_flag, &params)?;
-
-        ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "create_transcode_thumbnails", level = "debug")]
-    fn create_transcode_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoTranscodeParams) -> ControlFlow<()> {
-        let progress_handler = prepare_thread_handler_common(
-            progress_sender,
-            ToolStage::VideoOptimizer(VideoOptimizerStage::CreatingThumbnails),
-            self.video_transcode_result_entries.len(),
-            0,
-        );
-
-        let Some(config_cache_path) = get_config_cache_path() else {
-            return ControlFlow::Continue(());
-        };
-
-        let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
-        if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
-            debug!("Failed to create thumbnails directory: {e}");
-            return ControlFlow::Continue(());
-        }
-
-        let thumbnail_video_percentage_from_start = params.thumbnail_video_percentage_from_start;
-        let generate_grid_instead_of_single = params.generate_thumbnail_grid_instead_of_single;
-        let thumbnail_grid_tiles_per_side = params.thumbnail_grid_tiles_per_side;
-
-        let errors = self
-            .video_transcode_result_entries
-            .par_iter_mut()
-            .map(|entry| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-
-                match generate_thumbnail(
+            VideoOptimizerParameters::VideoTranscode(params) => {
+                let mut entries = check_videos(
+                    cd,
+                    mem::take(&mut self.video_transcode_test_entries),
+                    &get_video_transcode_cache_file(),
                     stop_flag,
-                    &entry.path,
-                    entry.size,
-                    entry.modified_date,
-                    Some(entry.duration),
-                    &thumbnails_dir,
-                    thumbnail_video_percentage_from_start,
-                    generate_grid_instead_of_single,
-                    thumbnail_grid_tiles_per_side,
-                    params.generate_thumbnails,
-                ) {
-                    Ok(Some(thumbnail_path)) => {
-                        entry.thumbnail_path = Some(thumbnail_path);
-                        progress_handler.increase_items(1);
-                        Some(None)
-                    }
-                    Ok(None) => {
-                        progress_handler.increase_items(1);
-                        Some(None)
-                    }
-                    Err(e) => {
-                        progress_handler.increase_items(1);
-                        Some(Some(e))
-                    }
-                }
-            })
-            .while_some()
-            .flatten()
-            .collect::<Vec<String>>();
-
-        self.common_data.text_messages.warnings.extend(errors);
-
-        progress_handler.join_thread();
-        if check_if_stop_received(stop_flag) {
-            return ControlFlow::Break(());
-        }
-
-        ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "create_crop_thumbnails", level = "debug")]
-    fn create_crop_thumbnails(&mut self, progress_sender: Option<&Sender<ProgressData>>, stop_flag: &Arc<AtomicBool>, params: &VideoCropParams) -> ControlFlow<()> {
-        let progress_handler = prepare_thread_handler_common(
-            progress_sender,
-            ToolStage::VideoOptimizer(VideoOptimizerStage::CreatingThumbnails),
-            self.video_crop_result_entries.len(),
-            0,
-        );
-
-        let Some(config_cache_path) = get_config_cache_path() else {
-            return ControlFlow::Continue(());
-        };
-
-        let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
-        if let Err(e) = std::fs::create_dir_all(&thumbnails_dir) {
-            debug!("Failed to create thumbnails directory: {e}");
-            return ControlFlow::Continue(());
-        }
-
-        let thumbnail_video_percentage_from_start = params.thumbnail_video_percentage_from_start;
-        let generate_grid_instead_of_single = params.generate_thumbnail_grid_instead_of_single;
-        let thumbnail_grid_tiles_per_side = params.thumbnail_grid_tiles_per_side;
-
-        let errors = self
-            .video_crop_result_entries
-            .par_iter_mut()
-            .map(|entry| {
-                if check_if_stop_received(stop_flag) {
-                    return None;
-                }
-
-                let result = generate_thumbnail(
-                    stop_flag,
-                    &entry.path,
-                    entry.size,
-                    entry.modified_date,
-                    Some(entry.duration),
-                    &thumbnails_dir,
-                    thumbnail_video_percentage_from_start,
-                    generate_grid_instead_of_single,
-                    thumbnail_grid_tiles_per_side,
-                    params.generate_thumbnails,
+                    progress_sender,
+                    |entry| Some(video_converter::check_video(entry)),
                 );
-
-                match result {
-                    Ok(Some(thumbnail_path)) => {
-                        entry.thumbnail_path = Some(thumbnail_path);
-                        progress_handler.increase_items(1);
-                        Some(None)
-                    }
-                    Ok(None) => {
-                        progress_handler.increase_items(1);
-                        Some(None)
-                    }
-                    Err(e) => {
-                        progress_handler.increase_items(1);
-                        Some(Some(e))
-                    }
-                }
-            })
-            .while_some()
-            .flatten()
-            .collect::<Vec<String>>();
-
-        self.common_data.text_messages.warnings.extend(errors);
-
-        progress_handler.join_thread();
-        if check_if_stop_received(stop_flag) {
-            return ControlFlow::Break(());
+                entries.retain(|e| e.error.is_none() && !params.excluded_codecs.contains(&e.codec));
+                self.information.number_of_videos_to_transcode = entries.len();
+                self.video_transcode_result_entries = entries;
+                let entries = self.video_transcode_result_entries.iter_mut().collect();
+                generate_thumbnails(entries, thumbnail_settings, thumbnail_stage, progress_sender, stop_flag, &mut cd.text_messages.warnings)
+            }
+            VideoOptimizerParameters::VideoCrop(params) => {
+                let mut entries = check_videos(
+                    cd,
+                    mem::take(&mut self.video_crop_test_entries),
+                    &get_video_crop_cache_file(&params),
+                    stop_flag,
+                    progress_sender,
+                    |entry| video_cropper::check_video_crop(entry, &params, stop_flag),
+                );
+                entries.retain(|e| e.error.is_none() && e.new_image_dimensions != (0, 0, 0, 0));
+                self.information.number_of_videos_to_crop = entries.len();
+                self.video_crop_result_entries = entries;
+                let entries = self.video_crop_result_entries.iter_mut().collect();
+                generate_thumbnails(entries, thumbnail_settings, thumbnail_stage, progress_sender, stop_flag, &mut cd.text_messages.warnings)
+            }
         }
-
-        ControlFlow::Continue(())
-    }
-
-    #[fun_time(message = "load_video_transcode_cache", level = "debug")]
-    fn load_video_transcode_cache(
-        &mut self,
-    ) -> (
-        BTreeMap<String, VideoTranscodeEntry>,
-        BTreeMap<String, VideoTranscodeEntry>,
-        BTreeMap<String, VideoTranscodeEntry>,
-    ) {
-        load_and_split_cache_generalized_by_path(&get_video_transcode_cache_file(), mem::take(&mut self.video_transcode_test_entries), self)
-    }
-
-    #[fun_time(message = "load_video_crop_cache", level = "debug")]
-    fn load_video_crop_cache(&mut self, params: &VideoCropParams) -> (BTreeMap<String, VideoCropEntry>, BTreeMap<String, VideoCropEntry>, BTreeMap<String, VideoCropEntry>) {
-        load_and_split_cache_generalized_by_path(&get_video_crop_cache_file(params), mem::take(&mut self.video_crop_test_entries), self)
-    }
-
-    #[fun_time(message = "save_video_transcode_cache", level = "debug")]
-    fn save_video_transcode_cache(&mut self, vec_file_entry: &[VideoTranscodeEntry], loaded_hash_map: BTreeMap<String, VideoTranscodeEntry>) {
-        save_and_connect_cache_generalized_by_path(&get_video_transcode_cache_file(), vec_file_entry, loaded_hash_map, self);
-    }
-
-    #[fun_time(message = "save_video_crop_cache", level = "debug")]
-    fn save_video_crop_cache(&mut self, vec_file_entry: &[VideoCropEntry], params: &VideoCropParams, loaded_hash_map: BTreeMap<String, VideoCropEntry>) {
-        save_and_connect_cache_generalized_by_path(&get_video_crop_cache_file(params), vec_file_entry, loaded_hash_map, self);
     }
 
     #[fun_time(message = "fix_files", level = "debug")]
@@ -406,6 +190,52 @@ impl VideoOptimizer {
             }
         }
     }
+}
+
+/// Runs `check` (cache-aware, in parallel) over `entries`; check errors become warnings.
+#[fun_time(message = "check_videos", level = "debug")]
+fn check_videos<T: CheckedVideo>(
+    common_data: &mut CommonToolData,
+    entries: BTreeMap<String, T>,
+    cache_file: &str,
+    stop_flag: &Arc<AtomicBool>,
+    progress_sender: Option<&Sender<ProgressData>>,
+    check: impl Fn(T) -> Option<T> + Sync,
+) -> Vec<T> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let (loaded_hash_map, records_already_cached, non_cached_files_to_check) = load_and_split_cache_generalized_by_path(cache_file, entries, common_data);
+
+    let progress_handler = prepare_thread_handler_common(
+        progress_sender,
+        ToolStage::VideoOptimizer(VideoOptimizerStage::ProcessingVideos),
+        non_cached_files_to_check.len(),
+        non_cached_files_to_check.values().map(ResultEntry::get_size).sum(),
+    );
+
+    let mut checked: Vec<T> = non_cached_files_to_check
+        .into_par_iter()
+        .map(|(_path, entry)| {
+            if check_if_stop_received(stop_flag) {
+                return None;
+            }
+            let size = entry.get_size();
+            let res = check(entry);
+            progress_handler.increase_items(1);
+            progress_handler.increase_size(size);
+            res
+        })
+        .while_some()
+        .collect();
+
+    common_data.text_messages.warnings.extend(checked.iter().filter_map(CheckedVideo::error).cloned());
+    checked.extend(records_already_cached.into_values());
+
+    progress_handler.join_thread();
+
+    save_and_connect_cache_generalized_by_path(cache_file, &checked, loaded_hash_map, common_data);
+    checked
 }
 
 pub fn get_video_transcode_cache_file() -> String {

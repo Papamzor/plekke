@@ -1,16 +1,23 @@
 use std::fs;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use blake3::Hasher;
+use crossbeam_channel::Sender;
 use image::{GenericImage, RgbImage};
+use log::debug;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::common::config_cache_path::get_config_cache_path;
 use crate::common::consts::VIDEO_RESOLUTION_LIMIT;
 use crate::common::process_utils::disable_windows_console_window;
-use crate::common::progress_stop_handler::check_if_stop_received;
+use crate::common::progress_data::{ProgressData, ToolStage};
+use crate::common::progress_stop_handler::{check_if_stop_received, prepare_thread_handler_common};
+use crate::common::traits::ResultEntry;
 use crate::flc;
 use crate::helpers::ffprobe::ffprobe;
 use crate::helpers::long_operation_watcher::run_with_long_operation_warnings;
@@ -149,6 +156,84 @@ pub(crate) fn extract_frame_ffmpeg(video_path: &Path, timestamp: f32, max_values
     let img = image::load_from_memory(&output.stdout).map_err(|e| flc!("core_failed_to_load_image_frame", reason = e.to_string()))?;
 
     Ok(img.into_rgb8())
+}
+
+/// Thumbnail options shared by the video tools.
+#[derive(Clone, Copy)]
+pub(crate) struct ThumbnailSettings {
+    pub generate: bool,
+    pub percentage_from_start: u8,
+    pub grid: bool,
+    pub grid_tiles_per_side: u8,
+}
+
+/// Result entry that can carry a video thumbnail.
+pub(crate) trait ThumbnailEntry: ResultEntry + Send {
+    fn duration(&self) -> Option<f64>;
+    fn set_thumbnail_path(&mut self, thumbnail_path: PathBuf);
+}
+
+/// Finds or generates thumbnails for `entries` in parallel; failures go to `warnings`.
+pub(crate) fn generate_thumbnails<T: ThumbnailEntry>(
+    entries: Vec<&mut T>,
+    settings: ThumbnailSettings,
+    stage: ToolStage,
+    progress_sender: Option<&Sender<ProgressData>>,
+    stop_flag: &Arc<AtomicBool>,
+    warnings: &mut Vec<String>,
+) -> ControlFlow<()> {
+    if entries.is_empty() {
+        return ControlFlow::Continue(());
+    }
+    let Some(config_cache_path) = get_config_cache_path() else {
+        return ControlFlow::Continue(());
+    };
+    let thumbnails_dir = config_cache_path.cache_folder.join(VIDEO_THUMBNAILS_SUBFOLDER);
+    if let Err(e) = fs::create_dir_all(&thumbnails_dir) {
+        debug!("Failed to create thumbnails directory: {e}");
+        return ControlFlow::Continue(());
+    }
+
+    let progress_handler = prepare_thread_handler_common(progress_sender, stage, entries.len(), 0);
+    let errors: Vec<String> = entries
+        .into_par_iter()
+        .map(|entry| {
+            if check_if_stop_received(stop_flag) {
+                return None;
+            }
+            let result = generate_thumbnail(
+                stop_flag,
+                entry.get_path(),
+                entry.get_size(),
+                entry.get_modified_date(),
+                entry.duration(),
+                &thumbnails_dir,
+                settings.percentage_from_start,
+                settings.grid,
+                settings.grid_tiles_per_side,
+                settings.generate,
+            );
+            progress_handler.increase_items(1);
+            Some(match result {
+                Ok(Some(thumbnail_path)) => {
+                    entry.set_thumbnail_path(thumbnail_path);
+                    None
+                }
+                Ok(None) => None,
+                Err(e) => Some(e),
+            })
+        })
+        .while_some()
+        .flatten()
+        .collect();
+    warnings.extend(errors);
+
+    progress_handler.join_thread();
+    if check_if_stop_received(stop_flag) {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(())
+    }
 }
 
 pub fn generate_thumbnail(

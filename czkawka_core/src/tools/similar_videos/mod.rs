@@ -16,6 +16,7 @@ use similario_core::VideoSignature;
 use crate::common::model::FileEntry;
 use crate::common::tool_data::CommonToolData;
 use crate::common::traits::impl_result_entry;
+use crate::common::video_utils::ThumbnailEntry;
 
 pub const MAX_TOLERANCE: i32 = 20;
 
@@ -48,7 +49,7 @@ pub const DEFAULT_AUDIO_LENGTH_RATIO: f64 = 0.1;
 pub const DEFAULT_AUDIO_MIN_DURATION_SECONDS: u32 = 10;
 pub const DEFAULT_AUDIO_MAXIMUM_DIFFERENCE: f64 = 3.0;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VideosEntry {
     pub path: PathBuf,
     pub size: u64,
@@ -70,7 +71,7 @@ pub struct VideosEntry {
 
 /// Minimal cache entry used to persist audio fingerprint data for video files.
 /// Kept separate from `VideosEntry` so the visual-hash cache format is not affected.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VideoAudioEntry {
     pub path: PathBuf,
     pub size: u64,
@@ -81,22 +82,22 @@ pub struct VideoAudioEntry {
 
 impl_result_entry!(VideoAudioEntry, VideosEntry);
 
+impl ThumbnailEntry for VideosEntry {
+    fn duration(&self) -> Option<f64> {
+        self.duration
+    }
+    fn set_thumbnail_path(&mut self, thumbnail_path: PathBuf) {
+        self.thumbnail_path = Some(thumbnail_path);
+    }
+}
+
 impl FileEntry {
     fn into_videos_entry(self) -> VideosEntry {
         VideosEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-
-            signature: None,
-            error: String::new(),
-            fps: None,
-            codec: None,
-            bitrate: None,
-            width: None,
-            height: None,
-            duration: None,
-            thumbnail_path: None,
+            ..Default::default()
         }
     }
 
@@ -105,8 +106,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-            fingerprint: Vec::new(),
-            audio_duration_seconds: 0,
+            ..Default::default()
         }
     }
 }

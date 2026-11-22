@@ -51,7 +51,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-            hash: String::new(),
+            ..Default::default()
         }
     }
 }

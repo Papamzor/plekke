@@ -30,7 +30,7 @@ pub const SIMILAR_VALUES: [[u32; 6]; 4] = [
     [6, 20, 40, 40, 40, 40], // 64
 ];
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ImagesEntry {
     pub path: PathBuf,
     pub size: u64,
@@ -48,11 +48,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-
-            width: 0,
-            height: 0,
-            hashes: Vec::new(),
-            difference: 0,
+            ..Default::default()
         }
     }
 }

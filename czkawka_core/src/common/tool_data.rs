@@ -202,6 +202,10 @@ pub trait CommonData {
             return Err(());
         }
 
+        let cd = self.get_cd_mut();
+        if cd.tool_type.may_use_reference_paths() {
+            cd.use_reference_folders = !cd.directories.reference_directories.is_empty() || !cd.directories.reference_files.is_empty();
+        }
         Ok(())
     }
 

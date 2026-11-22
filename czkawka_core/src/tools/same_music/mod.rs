@@ -30,7 +30,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MusicEntry {
     pub size: u64,
 
@@ -54,14 +54,7 @@ impl FileEntry {
             size: self.size,
             path: self.path,
             modified_date: self.modified_date,
-
-            fingerprint: Vec::new(),
-            track_title: String::new(),
-            track_artist: String::new(),
-            year: String::new(),
-            length: 0,
-            genre: String::new(),
-            bitrate: 0,
+            ..Default::default()
         }
     }
 }
